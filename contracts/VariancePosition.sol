@@ -27,9 +27,9 @@ library VariancePosition {
     }
 
     function addToPosition(Position[] storage position, uint256 expiryTime, uint256 strike, uint256 longAmount, uint256 shortAmount, uint256 sellerPay, uint256 index) external {
-        require(index < position.length);
+        require(index < position.length + 1);
 
-        if(index >= position.length) {
+        if(index == position.length) {
             _createPosition(position);
         }
 
