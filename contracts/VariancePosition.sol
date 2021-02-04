@@ -19,15 +19,13 @@ library VariancePosition {
         uint256 shortPositionAmount;
         //The amount this position has been paid in ether. Updated when filling orders from sellers.
         uint256 sellerPayment;
-        //The ask price in ether per unit to sell.
-        uint256 askPrice;
     }
 
     /*
     * Pushes a new empty position into the array for an address.
     */
     function _createPosition(Position[] storage position) internal {
-        position.push(Position(0, 0, 0, 0, 0));
+        position.push(Position(0, 0, 0, 0));
     }
 
     /*
@@ -45,7 +43,7 @@ library VariancePosition {
     * This function will check if an index is one greater than the size of the position array. If it is, it will create a new position and update with values. Otherwise,
     * it will just add to an already existing position.
     */
-    function addToPosition(Position[] storage position, uint256 strike, uint256 sellAmount, uint256 sellerPay, uint256 askPrice, uint256 index) external {
+    function addToPosition(Position[] storage position, uint256 strike, uint256 sellAmount, uint256 sellerPay, uint256 index) external {
         require(index < position.length + 1);
 
         if(index == position.length) {
@@ -56,7 +54,6 @@ library VariancePosition {
         position[index].longPositionAmount = position[index].longPositionAmount.add(sellAmount);
         position[index].shortPositionAmount = position[index].shortPositionAmount.add(sellAmount);
         position[index].sellerPayment = position[index].sellerPayment.add(sellerPay);
-        position[index].askPrice = askPrice;
     }
 
     /*
@@ -77,11 +74,11 @@ library VariancePosition {
     /*
     * Find the index of a position given the realizec variance strike and ask price. Otherwise, return position length.
     */
-    function findPositionIndex(Position[] storage position, uint256 strike, uint256 askPrice) external view returns(uint256) {
+    function findPositionIndex(Position[] storage position, uint256 strike) external view returns(uint256) {
         uint256 i;
 
         for(i = 0; i < position.length; i++) {
-            if(position[i].strike == strike && position[i].askPrice == askPrice) {
+            if(position[i].strike == strike) {
                 return (i);
             }
         }
