@@ -13,6 +13,7 @@ contract Orderbook is Ownable {
         uint256 askPrice; //Ask price per unit for the order.
         uint256 vaultId; //Index for the seller's position.
         address sellerAddress; //Address of the seller.
+        bool unfilled; //Has order been filled?
     }
 
     mapping(address => VariancePosition.UserPositions) public userPositions; //Positions held by each seller or buyer.
@@ -57,7 +58,6 @@ contract Orderbook is Ownable {
         require(contractEpoch > block.timestamp);
         uint256 i;
         uint256 currStrike;
-        uint256 currAskPrice;
         uint256 currId;
         uint256 currLongPositionAmount;
         uint256 adjustedAmount;
@@ -69,13 +69,12 @@ contract Orderbook is Ownable {
             currSeller = openOrders[i].sellerAddress; //Get seller from order.
             currStrike = userPositions[currSeller].positions[currId].strike; //Get strike from order.
             currLongPositionAmount = userPositions[currSeller].positions[currId].longPositionAmount; //Get long position amount available from order.
-            currAskPrice = openOrders[i].askPrice; //Get ask price from order.
             if(unitAmount == 0) { //If we have filled already desired units from buyer, exit loop.
                 break;
-            } else if(openOrders[i].askPrice != 0 && currStrike >= minStrike) { //Check the order is still open and we are at desired minimum strike.
+            } else if(openOrders[i].unfilled && currStrike >= minStrike) { //Check the order is still open and we are at desired minimum strike.
                 if(unitAmount >= currLongPositionAmount) { //Check how much the current order can fill based on what is left from buyer units.
                     adjustedAmount = currLongPositionAmount;
-                    openOrders[i].askPrice = 0; //Set askPrice to 0 to signal order has been filled.
+                    openOrders[i].unfilled = false; //Signal order has been filled.
                 } else {
                     adjustedAmount = unitAmount;
                 }
@@ -100,7 +99,7 @@ contract Orderbook is Ownable {
         uint256 orderSize = openOrders.length;
 
         if(orderSize == 0) {
-            openOrders.push(Order(askPrice, vaultId, owner)); //If this is first order, just push it into the struct.
+            openOrders.push(Order(askPrice, vaultId, owner, true)); //If this is first order, just push it into the struct.
             return;
         }
 
@@ -115,7 +114,7 @@ contract Orderbook is Ownable {
                 _addNewOrder(owner, askPrice, vaultId, i); //Add new order into array in the first index where it has either lower strike or same strike but lower ask price.
                 break;
             } else if(i == orderSize - 1) {
-                openOrders.push(Order(askPrice, vaultId, owner)); //If at the last entry in the orders, push this at the end.
+                openOrders.push(Order(askPrice, vaultId, owner, true)); //If at the last entry in the orders, push this at the end.
             }
         }
     }
@@ -128,24 +127,30 @@ contract Orderbook is Ownable {
         uint256 currId;
         uint256 currAskPrice;
         address currAddr;
+        bool currUnfilled;
         uint256 prevId;
         uint256 prevAskPrice;
         address prevAddr;
+        bool prevUnfilled;
 
-        openOrders.push(Order(0, 0, address(0))); //Push one new empty order to the orderbook struct. This will get filled by the order shifted to the right.
+        openOrders.push(Order(0, 0, address(0), false)); //Push one new empty order to the orderbook struct. This will get filled by the order shifted to the right.
         currId = vaultId; //Order parameters to be added at the starting index.
         currAddr = addr;
         currAskPrice = askPrice;
+        currUnfilled = true;
         for(i = index; index < openOrders.length; i++) {
             prevAskPrice = openOrders[i].askPrice; //Keep the old order at this index because it will be added to next one.
             prevId = openOrders[i].vaultId;
             prevAddr = openOrders[i].sellerAddress;
+            prevUnfilled = openOrders[i].unfilled;
             openOrders[i].askPrice = currAskPrice; //Update the current order to the one before it or the new order being inserted.
             openOrders[i].vaultId = currId;
             openOrders[i].sellerAddress = currAddr;
+            openOrders[i].unfilled = currUnfilled;
             currId = prevId; //Store the old order as current because it will replace the next one.
             currAddr = prevAddr;
             currAskPrice = prevAskPrice;
+            currUnfilled = prevUnfilled;
         }
     }
 }
