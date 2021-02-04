@@ -9,15 +9,7 @@ beforeEach(async function() {
     [owner, addr1] = await ethers.getSigners();
     testDate = new Date('2021.02.10').getTime() / 1000;
 
-    const Library = await ethers.getContractFactory("VariancePosition");
-    const VariancePosition = await Library.deploy();
-    await VariancePosition.deployed();
-
-
-    const Contract = await ethers.getContractFactory("Orderbook", {
-        libraries: {
-            VariancePosition: VariancePosition.address
-    }});
+    const Contract = await ethers.getContractFactory("Orderbook");
 
     Orderbook = await Contract.deploy(testDate);
     await Orderbook.deployed();

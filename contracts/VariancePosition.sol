@@ -11,62 +11,67 @@ library VariancePosition {
 
     //Individual position struct
     struct Position {
-        //The strike realized variance of the position
+        //The strike realized variance of the position.
         uint256 strike;
         //The amount of long position units. This value represents a call on the variance swap at realized strike.
         uint256 longPositionAmount;
         //The amount of short position units. This value represents the inverse of the longPositionAmount.
         uint256 shortPositionAmount;
-        //The amount this position has been paid in ether. Updated when filling orders from sellers.
+    }
+
+    //Structure that holds all positions of an address, as well as the total payment they have received
+    struct UserPositions {
+        //Array of all positions a user holds.
+        Position[] positions;
+        //The total amount a user has been paid in discrete units.
         uint256 sellerPayment;
     }
 
     /*
     * Pushes a new empty position into the array for an address.
     */
-    function _createPosition(Position[] storage position) internal {
-        position.push(Position(0, 0, 0, 0));
+    function _createPosition(UserPositions storage userPositions, uint256 strike) internal {
+        userPositions.positions.push(Position(strike, 0, 0));
     }
 
     /*
     * This function will check if an index is one greater than the size of the position array. If it is, it will create a new position and update with values. Otherwise,
     * it will just add to an already existing position.
     */
-    function addToPosition(Position[] storage position, uint256 strike, uint256 sellAmount, uint256 sellerPay, uint256 index) external {
-        require(index < position.length + 1);
+    function _addToPosition(UserPositions storage userPositions, uint256 strike, uint256 longAmount, uint256 shortAmount, uint256 sellerPay, uint256 index) internal {
+        require(index < userPositions.positions.length + 1);
 
-        if(index == position.length) {
-            _createPosition(position);
+        if(index == userPositions.positions.length) {
+            _createPosition(userPositions, strike);
         }
 
-        position[index].strike = strike;
-        position[index].longPositionAmount = position[index].longPositionAmount.add(sellAmount);
-        position[index].shortPositionAmount = position[index].shortPositionAmount.add(sellAmount);
-        position[index].sellerPayment = position[index].sellerPayment.add(sellerPay);
+        userPositions.positions[index].longPositionAmount = userPositions.positions[index].longPositionAmount.add(longAmount);
+        userPositions.positions[index].shortPositionAmount = userPositions.positions[index].shortPositionAmount.add(shortAmount);
+        userPositions.sellerPayment = userPositions.sellerPayment.add(sellerPay);
     }
 
     /*
     * Remove long and short units as well as sellerPay from a position. This function is used for filling orders. 
     */
-    function removeFromPosition(Position[] storage position, uint256 longAmount, uint256 shortAmount, uint256 sellerPay, uint256 index) external {
-        require(index < position.length);
+    function _removeFromPosition(UserPositions storage userPositions, uint256 longAmount, uint256 shortAmount, uint256 sellerPay, uint256 index) internal {
+        require(index < userPositions.positions.length);
 
-        position[index].longPositionAmount = position[index].longPositionAmount.sub(longAmount);
-        position[index].shortPositionAmount = position[index].shortPositionAmount.sub(shortAmount);
-        position[index].sellerPayment = position[index].sellerPayment.sub(sellerPay);
+        userPositions.positions[index].longPositionAmount = userPositions.positions[index].longPositionAmount.sub(longAmount);
+        userPositions.positions[index].shortPositionAmount = userPositions.positions[index].shortPositionAmount.sub(shortAmount);
+        userPositions.sellerPayment = userPositions.sellerPayment.sub(sellerPay);
     }
 
     /*
     * Find the index of a position given the realizec variance strike and ask price. Otherwise, return position length.
     */
-    function findPositionIndex(Position[] storage position, uint256 strike) external view returns(uint256) {
+    function _findPositionIndex(UserPositions storage userPositions, uint256 strike) internal view returns(uint256) {
         uint256 i;
 
-        for(i = 0; i < position.length; i++) {
-            if(position[i].strike == strike) {
+        for(i = 0; i < userPositions.positions.length; i++) {
+            if(userPositions.positions[i].strike == strike) {
                 return (i);
             }
         }
-        return (position.length);
+        return (userPositions.positions.length);
     }
 }
