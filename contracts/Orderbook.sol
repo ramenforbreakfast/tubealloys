@@ -96,6 +96,7 @@ contract Orderbook is Ownable {
         uint256 currAskPrice;
         uint256 currId;
         address currAddr;
+        bool currUnfilled;
         uint256 orderSize = openOrders.length;
 
         if(orderSize == 0) {
@@ -107,8 +108,9 @@ contract Orderbook is Ownable {
             currAddr = openOrders[i].sellerAddress; //Get seller from order.
             currId = openOrders[i].vaultId; //Get position index from order.
             currAskPrice = openOrders[i].askPrice; //Get ask price from order.
+            currUnfilled = openOrders[i].unfilled; //Get filled status from order
             currStrike = userPositions[currAddr].positions[currId].strike; //Get strike from order.
-            if(strike == currStrike && currAddr == owner && currAskPrice == askPrice) { //If the current order matches the new order, we exit out because its same so no need to update.
+            if(strike == currStrike && currAddr == owner && currAskPrice == askPrice && currUnfilled) { //If the current order matches the new order, we exit out because its same so no need to update.
                 break;
             } else if(strike < currStrike || (strike == currStrike && askPrice < currAskPrice)) {
                 _addNewOrder(owner, askPrice, vaultId, i); //Add new order into array in the first index where it has either lower strike or same strike but lower ask price.
