@@ -36,8 +36,14 @@ describe("Deployment", function () {
 describe("Opening Orders", function () {
     it("Add Sell Order and Check Position", async function () {
         await Orderbook.sellOrder(addr1.address, 10, 5, 100);
-        let strike;
-        strike = await Orderbook.getPosition(addr1.address, 0);
-        expect(strike).to.equal(10);
+        let position, order;
+        position = await Orderbook.getPosition(addr1.address, 0);
+        expect(position[0]).to.equal(10);
+        expect(position[1]).to.equal(100);
+        expect(position[2]).to.equal(100);
+        expect(position[3]).to.equal(0);
+        order = await Orderbook.getOrder(0);
+        expect(order[0]).to.equal(5);
+        expect(order[1]).to.equal(0);
     });
 });

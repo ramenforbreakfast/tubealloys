@@ -29,17 +29,6 @@ library VariancePosition {
     }
 
     /*
-    * Deletes a position from the position array for an address.
-    */
-    function _deletePosition(Position[] storage position, uint256 index) internal {
-        require(index < position.length);
-
-        position[index] = position[position.length - 1];
-        delete position[position.length - 1];
-        position.pop();
-    }
-
-    /*
     * This function will check if an index is one greater than the size of the position array. If it is, it will create a new position and update with values. Otherwise,
     * it will just add to an already existing position.
     */
@@ -65,10 +54,6 @@ library VariancePosition {
         position[index].longPositionAmount = position[index].longPositionAmount.sub(longAmount);
         position[index].shortPositionAmount = position[index].shortPositionAmount.sub(shortAmount);
         position[index].sellerPayment = position[index].sellerPayment.sub(sellerPay);
-
-        if(position[index].longPositionAmount == 0 && position[index].shortPositionAmount == 0 && position[index].sellerPayment == 0) {
-            _deletePosition(position, index);
-        }
     }
 
     /*

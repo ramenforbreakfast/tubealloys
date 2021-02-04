@@ -5,7 +5,7 @@ import "@openzeppelin/contracts/math/SafeMath.sol";
 import {VariancePosition} from "./VariancePosition.sol";
 
 
-contract Orderbook is Ownable{
+contract Orderbook is Ownable {
     using SafeMath for uint256;
 
     struct Order {
@@ -24,9 +24,14 @@ contract Orderbook is Ownable{
         contractEpoch = epoch;
     }
 
-    function getPosition(address owner, uint256 index) external view returns(uint256) {
+    function getOrder(uint256 index) external view returns(uint256, uint256, address) {
+        Order memory currOrder = openOrders[index];
+        return(currOrder.askPrice, currOrder.vaultId, currOrder.sellerAddress);
+    }
+
+    function getPosition(address owner, uint256 index) external view returns(uint256, uint256, uint256, uint256) {
         VariancePosition.Position memory currPosition = positions[owner][index];
-        return(currPosition.strike);
+        return(currPosition.strike, currPosition.longPositionAmount, currPosition.shortPositionAmount, currPosition.sellerPayment);
     }
 
     function sellOrder(address owner, uint256 strike, uint256 askPrice, uint256 collateral) onlyOwner external {
@@ -44,6 +49,11 @@ contract Orderbook is Ownable{
         uint256 currId;
         address currAddr;
         uint256 orderSize = openOrders.length;
+
+        if(orderSize == 0) {
+            openOrders.push(Order(askPrice, vaultId, owner));
+            return;
+        }
 
         for(i = 0; i < orderSize; i++) {
             currAddr = openOrders[i].sellerAddress;
