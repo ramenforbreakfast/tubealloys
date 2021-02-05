@@ -24,7 +24,7 @@ describe("Deployment", function () {
     });
 
     it("Right epoch", async function () {
-        expect(await Orderbook.contractEpoch()).to.equal(testDate);
+        expect(await Orderbook.roundEnd()).to.equal(testDate);
     });
 });
 

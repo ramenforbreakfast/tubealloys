@@ -20,10 +20,12 @@ contract Orderbook is Ownable {
 
     Order[] public openOrders; //Array of all orders sorted first by strike and then ask price.
 
-    uint256 public contractEpoch; //epoch for this orderbook
+    uint256 public roundEnd; //round end timestamp for this orderbook
 
-    constructor(uint256 epoch) {
-        contractEpoch = epoch;
+    address[] public addrPositions; //Addresses that hold positions
+
+    constructor(uint256 endTimestamp) {
+        roundEnd = endTimestamp;
     }
 
     /*
@@ -64,6 +66,20 @@ contract Orderbook is Ownable {
     }
 
     /*
+    * Get total number of address that hold positions.
+    */
+    function getNumberofActiveAddresses() external view returns(uint256) {
+        return addrPositions.length;
+    }
+
+    /*
+    * Get address by index.
+    */
+    function getAddrbyIdx(uint256 index) external view returns(address) {
+        return addrPositions[index];
+    }
+
+    /*
     * Get the payout from filled orders for a seller. Set this value internally to 0 to signify the seller has received this payment.
     */
     function getSellerOrderPayout(address owner) external returns(uint256) {
@@ -74,7 +90,7 @@ contract Orderbook is Ownable {
     * Open a sell order for a specific strike and ask price.
     */
     function sellOrder(address seller, uint256 strike, uint256 askPrice, uint256 collateral) onlyOwner external {
-        require(contractEpoch > block.timestamp);
+        require(roundEnd > block.timestamp);
         uint256 index;
 
         //Find if the seller already has a position at this strike. Otherwise, get the index for a new position to be created.
@@ -83,13 +99,15 @@ contract Orderbook is Ownable {
         VariancePosition._addToPosition(userPositions[seller], strike, collateral, collateral, 0, index);
         //Add this new sell order to the orderbook.
         _addToOrderbook(seller, strike, askPrice, index);
+        //Maintain addresses that hold positions
+        addrPositions.push(seller);
     }
 
     /*
     * Fill a buy order from the open orders that we maintain. We go from minimum strike and fill based on the number of units the buyer wants.
     */
     function fillBuyOrderbyUnitAmount(address buyer, uint256 minStrike, uint256 unitAmount) onlyOwner external returns(uint256) {
-        require(contractEpoch > block.timestamp);
+        require(roundEnd > block.timestamp);
         uint256 i;
         uint256 currStrike;
         uint256 currId;
@@ -123,6 +141,9 @@ contract Orderbook is Ownable {
                 unitAmount = unitAmount.sub(adjustedAmount); //Update the remaining buyer units after the transaction performed.
             }
         }
+
+        //Maintain addresses that hold positions
+        addrPositions.push(buyer);
 
         return totalPaid;
     }
