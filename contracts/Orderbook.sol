@@ -26,14 +26,48 @@ contract Orderbook is Ownable {
         contractEpoch = epoch;
     }
 
+    /*
+    * Get the length of the orders maintained.
+    */
+    function getNumberofOrders() external view returns(uint256) {
+        return openOrders.length;
+    }
+
+    /*
+    * Get the ask price, position id and seller address from an order.
+    */
     function getOrder(uint256 index) external view returns(uint256, uint256, address) {
         Order memory currOrder = openOrders[index];
         return(currOrder.askPrice, currOrder.vaultId, currOrder.sellerAddress);
     }
 
-    function getPosition(address owner, uint256 index) external view returns(uint256, uint256, uint256, uint256) {
+    /*
+    * Get the number of positions a specific address holds.
+    */
+    function getNumberofUserPositions(address addr) external view returns(uint256) {
+        return userPositions[addr].positions.length;
+    }
+
+    /*
+    * Get the position given an address and position index.
+    */
+    function getPosition(address owner, uint256 index) external view returns(uint256, uint256, uint256) {
         VariancePosition.Position memory currPosition = userPositions[owner].positions[index];
-        return(currPosition.strike, currPosition.longPositionAmount, currPosition.shortPositionAmount, userPositions[owner].sellerPayment);
+        return(currPosition.strike, currPosition.longPositionAmount, currPosition.shortPositionAmount);
+    }
+
+    /*
+    * Display the payout from filled orders for a seller.
+    */
+    function displaySellerOrderPayout(address owner) external view returns(uint256) {
+        return userPositions[owner].sellerPayment;
+    }
+
+    /*
+    * Get the payout from filled orders for a seller. Set this value internally to 0 to signify the seller has received this payment.
+    */
+    function getSellerOrderPayout(address owner) external returns(uint256) {
+        return VariancePosition._settleOrderPayment(userPositions[owner]);
     }
 
     /*
@@ -54,19 +88,22 @@ contract Orderbook is Ownable {
     /*
     * Fill a buy order from the open orders that we maintain. We go from minimum strike and fill based on the number of units the buyer wants.
     */
-    function fillBuyOrderbyUnitAmount(address buyer, uint256 minStrike, uint256 unitAmount) onlyOwner external {
+    function fillBuyOrderbyUnitAmount(address buyer, uint256 minStrike, uint256 unitAmount) onlyOwner external returns(uint256) {
         require(contractEpoch > block.timestamp);
         uint256 i;
         uint256 currStrike;
         uint256 currId;
         uint256 currLongPositionAmount;
+        uint256 currAskPrice;
         uint256 adjustedAmount;
         uint256 buyerPositionIndex;
+        uint256 totalPaid = 0;
         address currSeller;
 
         for(i = 0; i < openOrders.length; i++) {
             currId = openOrders[i].vaultId; //Get position index from order.
             currSeller = openOrders[i].sellerAddress; //Get seller from order.
+            currAskPrice = openOrders[i].askPrice; //Get ask price from order.
             currStrike = userPositions[currSeller].positions[currId].strike; //Get strike from order.
             currLongPositionAmount = userPositions[currSeller].positions[currId].longPositionAmount; //Get long position amount available from order.
             if(unitAmount == 0) { //If we have filled already desired units from buyer, exit loop.
@@ -82,9 +119,12 @@ contract Orderbook is Ownable {
                 VariancePosition._addToPosition(userPositions[currSeller], currStrike, 0, 0, adjustedAmount, currId); //Add payout seller gets from buyer for filling this order.
                 buyerPositionIndex = VariancePosition._findPositionIndex(userPositions[buyer], currStrike); //Find if buyer has an open position to add long position to.
                 VariancePosition._addToPosition(userPositions[buyer], currStrike, adjustedAmount, 0, 0, buyerPositionIndex); //Add the long units to buyer position.
+                totalPaid = totalPaid.add(adjustedAmount.mul(currAskPrice));
                 unitAmount = unitAmount.sub(adjustedAmount); //Update the remaining buyer units after the transaction performed.
             }
         }
+
+        return totalPaid;
     }
 
     /*

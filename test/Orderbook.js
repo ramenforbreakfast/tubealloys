@@ -4,9 +4,12 @@ let Orderbook;
 let owner;
 let testDate;
 let addr1;
+let addr2;
+let addr3;
+let addr4;
 
 beforeEach(async function() {
-    [owner, addr1] = await ethers.getSigners();
+    [owner, addr1, addr2, addr3, addr4] = await ethers.getSigners();
     testDate = new Date('2021.02.10').getTime() / 1000;
 
     const Contract = await ethers.getContractFactory("Orderbook");
@@ -33,9 +36,9 @@ describe("Opening Orders", function () {
         expect(position[0]).to.equal(10);
         expect(position[1]).to.equal(100);
         expect(position[2]).to.equal(100);
-        expect(position[3]).to.equal(0);
         order = await Orderbook.getOrder(0);
         expect(order[0]).to.equal(5);
         expect(order[1]).to.equal(0);
+        expect(order[2]).to.equal(addr1.address);
     });
 });
