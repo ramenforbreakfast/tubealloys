@@ -1,91 +1,79 @@
 pragma solidity ^0.7.3;
 
 import "@openzeppelin/contracts/math/SafeMath.sol";
+import "../libs/abdk-libraries-solidity/ABDKMath64x64.sol";
+import {VariancePosition} from "./VariancePosition.sol";
 
 library Settlement {
     /** WORK IN PROGRESS 
-        MANY FUNCTIONS ARE BASICALLY PSEUDO CODE SINCE OTHER COMPONENTS DO NOT EXIST YET
+        MANY FUNCTIONS/INTERFACES ARE BASICALLY PSEUDO CODE SINCE OTHER COMPONENTS DO NOT EXIST YET
      */
-    uint256 internal constant BASE = 1e8; // 1e8 gwei = 0.1 ETH
-
-    //
-    /**
-     * @notice checks with oracle if realized variance value at round end date is valid
-     * @param _roundEnd date that the round ends on
-     */
-    function isSettlementAllowed(uint256 _roundEnd) public view returns (bool) {
-        // boilerplate call to an oracle to determine if realized variance obtained is valid
-        bool isRealizedFinalized = oracle.isDisputePeriodOver(_roundEnd);
-        return isRealizedFinalized;
-    }
+    using SafeMath for uint256;
 
     /**
-     * @notice settle a swap position, return the payout in gwei for the total position amount
-     * @param receiver address of user calling settlement contract
-     * @param _positionID index of position in user -> position mapping
+     * @notice settle a swap position, add the settlement payout to their position for the user to redeem.
+     * @param _realizedVar realized variance pulled from the oracle
+     * @param userPositions list of positions that belong to the user
+     * @param index index of the position to be settled
      */
-    function settleSwapPosition(address _receiver, uint256 _positionIDX)
-        external
-    {
-        SwapInterface swap = SwapInterface(_positionIDX);
-        (
-            uint256 strikeVar,
-            uint256 longPosition,
-            uint256 shortPosition,
-            uint256 roundEnd
-        ) = swap.getSwapDetails();
-        require(
-            now > roundEnd,
-            "Settlement: Cannot settle swap, round has not ended!"
-        );
-        require(isSettlementAllowed(roundEnd));
+    function settleSwapPosition(
+        uint256 _realizedVar,
+        UserPositions storage userPositions,
+        uint256 index
+    ) internal {
+        // Speak to Andres about changing what view functions exist where because kind of confusing in its current state
+        // For example, in controller, I am iterating through the OrderBook to grab a userPositions array.
+        // There should be viewPosition function in the VariancePosition library in addition to the getPosition function in OrderBook
+        // If I already have the userPosition list and the index, I should not need to poll the orderbook just to view the position
+        // Kind of strange that I would have to import the Orderbook contract just to access a view function on the Variance Position itself
+        // Orderbook getPosition should then call a view function FROM VariancePosition.
+        // Going to implement as if view function was accessible from VariancePosition
+        (uint256 _strikeVar, uint128 longPosition, uint128 shortPosition, ) =
+            _viewPosition(userPositions, index);
+        // Convert variance into decimalized representation i.e. 150% variance is 1.5
+        // This will obviously depend on how variance oracle is implemented, we can change math operations later
+        uint128 strikeVar = ABDKMath64x64.divu(_strikeVar, 100);
+        uint128 realizedVar = ABDKMath64x64.divu(_realizedVar, 100);
 
+        uint256 longPayoutPerSwap = calcPayoutPerSwap(strikeVar, realizedVar);
+        uint256 shortPayoutPerSwap = 1e17.sub(longPayoutPerSwap);
+        // multiply signed 64.64 bit fixed point ABDK long position by uint256 payout per swap in wei
         uint256 longPayout =
-            (getPayoutPerSwap(strikeVar, roundEnd)).mul(longPosition);
-        uint256 shortPayout = (1e8.sub(longPayout)).mul(shortPosition);
+            ABDKMath64x64.mulu(longPosition, longPayoutPerSwap);
+        uint256 shortPayout =
+            ABDKMath64x64.mulu(shortPosition, shortPayoutPerSwap);
         uint256 totalPayout = shortPayout.add(longPayout);
 
-        swap.removeShort(msg.sender, shortPosition);
-        swap.removeLong(msg.sender, longPosition);
-        pool.transferToUser(_receiver, totalPayout);
-        // delete position
-        emit Settlement(_receiver, _positionIDX, msg.sender, totalPayout);
-    }
-
-    /**
-     * This function should be declared elsewhere and accessible not from Settlement contract probably?
-     * @notice pulls realized variance from oracle, checks if realized value is valid
-     * @param _date date to retrieve realized variance for
-     */
-    function _getRealizedVariance(uint256 _date)
-        internal
-        view
-        returns (uint256 memory)
-    {
-        (uint256 realizedVar, bool varFinalized) = oracle.getRealized(_date);
-        require(
-            varFinalized,
-            "Settlement: Realized variance from oracle not settled yet"
+        _removeFromPosition(
+            userPositions,
+            longPosition,
+            shortPosition,
+            0,
+            index
         );
-        return varFinalized;
+        // Another question needs to be brought up, where do we put how much the user can redeem for a swap?
+        // It makes more sense to keep this in the VariancePosition, and move sellerPayment somewhere else, to the Orderbook.
+        // We would add the User's payout to their Variance Position, and allow them to redeem on expiry date.
+        _addPayoutToPosition(userPositions, index, totalPayout);
     }
 
     /**
-     * @notice calculates long payout of swap based on the strike/realized variance.
-     * @param _strikeVar strike variance for the swap
-     * @param _roundEnd date that the round ends on
+     * @notice calculates long payout of swap in wei based on the strike/realized variance.
+     * @param strikeVar strike variance for the swap in decimal representation
+     * @param realizedVar realized variance for the swap in decimal representation
      */
-    function _getPayoutPerSwap(uint256 _strikeVar, uint256 _roundEnd)
+    function calcPayoutPerSwap(uint128 strikeVar, uint128 realizedVar)
         internal
         returns (uint256 memory)
     {
-        uint256 strikeVar = _strikeVar.mul(BASE);
-        uint256 realizedVar = _getRealizedVariance(_roundEnd).mul(BASE);
-        uint256 varDifference =
+        uint256 payoutPerSwap =
             strikeVar < realizedVar
-                ? realizedVar.sub(strikeVar) // 1.515e8 -1.5e8 = 1.5e6
+                ? ABDKMath64x64.mulu(
+                    ABDKMath64x64.sub(realizedVar, strikeVar),
+                    1e17
+                ) // multiply difference times 0.1 ETH in wei
                 : ZERO;
         // fully collateralized, payout cannot exceed size of swap
-        return varDifference > 1e8 ? 1e8 : varDifference; // 1.5e6 gwei
+        return payoutPerSwap > 1e17 ? 1e17 : payoutPerSwap;
     }
 }
