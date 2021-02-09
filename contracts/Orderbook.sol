@@ -3,6 +3,7 @@ pragma solidity ^0.7.3;
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/math/SafeMath.sol";
 import {VariancePosition} from "./VariancePosition.sol";
+import "../libs/abdk-libraries-solidity/ABDKMath64x64.sol";
 
 
 contract Orderbook is Ownable {
@@ -10,7 +11,7 @@ contract Orderbook is Ownable {
 
     //Struct that holds information necessary to check for an open order.
     struct Order {
-        uint256 askPrice; //Ask price per unit for the order.
+        uint256 askPrice; //Ask price in wei per unit for the order.
         uint256 vaultId; //Index for the seller's position.
         address sellerAddress; //Address of the seller.
         bool unfilled; //Has order been filled?
@@ -22,10 +23,16 @@ contract Orderbook is Ownable {
 
     uint256 public roundEnd; //round end timestamp for this orderbook
 
+    uint256 public roundStart; //round start timestamp for this orderbook
+    
+    uint256 public roundImpliedVariance; //Implied Variance used for this orderbook
+
     address[] public addrPositions; //Addresses that hold positions
 
-    constructor(uint256 endTimestamp) {
+    constructor(uint256 startTimestamp, uint256 endTimestamp, uint256 impliedVariance) {
+        roundStart = startTimestamp;
         roundEnd = endTimestamp;
+        roundImpliedVariance = impliedVariance;
     }
 
     /*
@@ -39,6 +46,7 @@ contract Orderbook is Ownable {
     * Get the ask price, position id and seller address from an order.
     */
     function getOrder(uint256 index) external view returns(uint256, uint256, address) {
+        require(index < openOrders.length);
         Order memory currOrder = openOrders[index];
         return(currOrder.askPrice, currOrder.vaultId, currOrder.sellerAddress);
     }
@@ -53,7 +61,8 @@ contract Orderbook is Ownable {
     /*
     * Get the position given an address and position index.
     */
-    function getPosition(address owner, uint256 index) external view returns(uint256, uint256, uint256) {
+    function getPosition(address owner, uint256 index) external view returns(uint256, int128, int128) {
+        require(index < userPositions[owner].positions.length);
         VariancePosition.Position memory currPosition = userPositions[owner].positions[index];
         return(currPosition.strike, currPosition.longPositionAmount, currPosition.shortPositionAmount);
     }
@@ -61,8 +70,15 @@ contract Orderbook is Ownable {
     /*
     * Display the payout from filled orders for a seller.
     */
-    function displaySellerOrderPayout(address owner) external view returns(uint256) {
-        return userPositions[owner].sellerPayment;
+    function displayFilledOrderPayout(address owner) external view returns(uint256) {
+        return userPositions[owner].filledOrderPayment;
+    }
+
+    /*
+    * Display the payout from variance swap settlement.
+    */
+    function displayVarianceSwapSettlementPayout(address owner) external view returns(uint256) {
+        return userPositions[owner].varianceSwapPayout;
     }
 
     /*
@@ -76,27 +92,42 @@ contract Orderbook is Ownable {
     * Get address by index.
     */
     function getAddrbyIdx(uint256 index) external view returns(address) {
+        require(index < addrPositions.length);
         return addrPositions[index];
     }
 
     /*
     * Get the payout from filled orders for a seller. Set this value internally to 0 to signify the seller has received this payment.
     */
-    function getSellerOrderPayout(address owner) external returns(uint256) {
+    function getFilledOrderPayment(address owner) onlyOwner external returns(uint256) {
         return VariancePosition._settleOrderPayment(userPositions[owner]);
+    }
+
+    /*
+    * Get the total payout for variance swaps. Set this value internally to 0 to signify the seller has received this payment.
+    */
+    function getVarianceSwapPayment(address owner) onlyOwner external returns(uint256) {
+        return VariancePosition._settleVarianceSwap(userPositions[owner]);
+    }
+
+    /*
+    * Set the total payout for variance swaps. This is done from Controller smart contract.
+    */
+    function setVarianceSwapPayment(address owner, uint256 varianceSwapPayment) onlyOwner external {
+        VariancePosition._setVarianceSwap(userPositions[owner], varianceSwapPayment);
     }
 
     /*
     * Open a sell order for a specific strike and ask price.
     */
-    function sellOrder(address seller, uint256 strike, uint256 askPrice, uint256 collateral) onlyOwner external {
+    function sellOrder(address seller, uint256 strike, uint256 askPrice, int128 positionSize) onlyOwner external {
         require(roundEnd > block.timestamp);
         uint256 index;
 
         //Find if the seller already has a position at this strike. Otherwise, get the index for a new position to be created.
         index = VariancePosition._findPositionIndex(userPositions[seller], strike);
         //Create or add to an existing position for the seller.
-        VariancePosition._addToPosition(userPositions[seller], strike, collateral, collateral, 0, index);
+        VariancePosition._addToPosition(userPositions[seller], strike, positionSize, positionSize, 0, index);
         //Add this new sell order to the orderbook.
         _addToOrderbook(seller, strike, askPrice, index);
         //Maintain addresses that hold positions
@@ -106,14 +137,14 @@ contract Orderbook is Ownable {
     /*
     * Fill a buy order from the open orders that we maintain. We go from minimum strike and fill based on the number of units the buyer wants.
     */
-    function fillBuyOrderbyUnitAmount(address buyer, uint256 minStrike, uint256 unitAmount) onlyOwner external returns(uint256) {
+    function fillBuyOrderbyUnitAmount(address buyer, uint256 minStrike, int128 unitAmount) onlyOwner external returns(uint256) {
         require(roundEnd > block.timestamp);
         uint256 i;
         uint256 currStrike;
         uint256 currId;
-        uint256 currLongPositionAmount;
+        int128 currLongPositionAmount;
         uint256 currAskPrice;
-        uint256 adjustedAmount;
+        int128 adjustedAmount;
         uint256 buyerPositionIndex;
         uint256 totalPaid = 0;
         address currSeller;
@@ -134,11 +165,11 @@ contract Orderbook is Ownable {
                     adjustedAmount = unitAmount;
                 }
                 VariancePosition._removeFromPosition(userPositions[currSeller], adjustedAmount, 0, 0, currId); //Remove the long position amount that has been filled from seller.
-                VariancePosition._addToPosition(userPositions[currSeller], currStrike, 0, 0, adjustedAmount, currId); //Add payout seller gets from buyer for filling this order.
+                VariancePosition._addToPosition(userPositions[currSeller], currStrike, 0, 0, ABDKMath64x64.mulu(adjustedAmount, currAskPrice), currId); //Add payout seller gets from buyer for filling this order.
                 buyerPositionIndex = VariancePosition._findPositionIndex(userPositions[buyer], currStrike); //Find if buyer has an open position to add long position to.
                 VariancePosition._addToPosition(userPositions[buyer], currStrike, adjustedAmount, 0, 0, buyerPositionIndex); //Add the long units to buyer position.
-                totalPaid = totalPaid.add(adjustedAmount.mul(currAskPrice));
-                unitAmount = unitAmount.sub(adjustedAmount); //Update the remaining buyer units after the transaction performed.
+                totalPaid = totalPaid.add(ABDKMath64x64.mulu(adjustedAmount, currAskPrice));
+                unitAmount = ABDKMath64x64.sub(unitAmount, adjustedAmount); //Update the remaining buyer units after the transaction performed.
             }
         }
 

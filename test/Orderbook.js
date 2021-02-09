@@ -10,11 +10,13 @@ let addr4;
 
 beforeEach(async function() {
     [owner, addr1, addr2, addr3, addr4] = await ethers.getSigners();
-    testDate = new Date('2021.02.10').getTime() / 1000;
+    startDate = new Date('2021.04.03').getTime() / 1000;
+    endDate = new Date('2021.04.10').getTime() / 1000;
+    roundIV = 10;
 
     const Contract = await ethers.getContractFactory("Orderbook");
 
-    Orderbook = await Contract.deploy(testDate);
+    Orderbook = await Contract.deploy(startDate, endDate, roundIV);
     await Orderbook.deployed();
 });
 
@@ -24,7 +26,7 @@ describe("Deployment", function () {
     });
 
     it("Right epoch", async function () {
-        expect(await Orderbook.roundEnd()).to.equal(testDate);
+        expect(await Orderbook.roundEnd()).to.equal(endDate);
     });
 });
 
