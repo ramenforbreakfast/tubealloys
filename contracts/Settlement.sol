@@ -9,6 +9,7 @@ library Settlement {
         MANY FUNCTIONS/INTERFACES ARE BASICALLY PSEUDO CODE SINCE OTHER COMPONENTS DO NOT EXIST YET
      */
     using SafeMath for uint256;
+    uint256 constant varianceUnit = 1e17;
 
     /**
      * @notice settle a swap position, add the settlement payout to their position for the user to redeem.
@@ -22,14 +23,13 @@ library Settlement {
         uint256 _strikeVar,
         int128 longPosition,
         int128 shortPosition
-    ) internal {
+    ) internal returns (uint256) {
         // Convert variance into decimalized representation i.e. 150% variance is 1.5
         // This will obviously depend on how variance oracle is implemented, we can change math operations later
         int128 realizedVar = ABDKMath64x64.divu(_realizedVar, 100);
         int128 strikeVar = ABDKMath64x64.divu(_strikeVar, 100);
-
         uint256 longPayoutPerSwap = calcPayoutPerSwap(strikeVar, realizedVar);
-        uint256 shortPayoutPerSwap = 1e17.sub(longPayoutPerSwap);
+        uint256 shortPayoutPerSwap = varianceUnit.sub(longPayoutPerSwap);
         // multiply signed 64.64 bit fixed point ABDK long position by uint256 payout per swap in wei
         uint256 longPayout =
             ABDKMath64x64.mulu(longPosition, longPayoutPerSwap);
@@ -45,7 +45,7 @@ library Settlement {
      */
     function calcPayoutPerSwap(int128 strikeVar, int128 realizedVar)
         internal
-        returns (uint256 memory)
+        returns (uint256)
     {
         uint256 payoutPerSwap =
             strikeVar < realizedVar
@@ -53,7 +53,7 @@ library Settlement {
                     ABDKMath64x64.sub(realizedVar, strikeVar),
                     1e17
                 ) // multiply difference times 0.1 ETH in wei
-                : ZERO;
+                : 0;
         // fully collateralized, payout cannot exceed size of swap
         return payoutPerSwap > 1e17 ? 1e17 : payoutPerSwap;
     }
