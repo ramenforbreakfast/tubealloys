@@ -28,6 +28,7 @@ contract Controller {
         uint256 roundStart,
         uint256 roundEnd
     ) external {
+        oracle = OracleInterface(oracleAddress);
         Orderbook newSwapBook =
             new Orderbook(
                 roundStart,
@@ -132,6 +133,23 @@ contract Controller {
 
         uint256 settlement = currentBook.getUserSettlement(redeemer);
         //pool.transferToUser(redeemer, settlement);
+    }
+
+    function getBookInfoByIndex(uint256 bookIndex)
+        external
+        view
+        returns (
+            address,
+            uint256,
+            uint256
+        )
+    {
+        Orderbook currentBook = getBookByIndex(bookIndex);
+        return (
+            currentBook.bookOracle(),
+            currentBook.roundStart(),
+            currentBook.roundEnd()
+        );
     }
 
     /**

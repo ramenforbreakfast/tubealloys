@@ -2,7 +2,6 @@ pragma solidity ^0.7.3;
 
 import "@openzeppelin/contracts/math/SafeMath.sol";
 import "../libs/abdk-libraries-solidity/ABDKMath64x64.sol";
-import {VariancePosition} from "./VariancePosition.sol";
 
 library Settlement {
     /** WORK IN PROGRESS 

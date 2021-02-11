@@ -1,3 +1,8 @@
+//const { ethers } = require("hardhat");
+//const { task } = require("hardhat/config");
+
+const { task } = require("hardhat/config");
+
 require("@nomiclabs/hardhat-waffle");
 
 /**
@@ -13,4 +18,9 @@ task("accounts", "Prints the list of accounts", async () => {
   for (const account of accounts) {
     console.log(account.address);
   }
+});
+
+task("default-provider", "Prints info about the default provider", async () => {
+  const provider = await ethers.getDefaultProvider();
+  console.log(provider);
 });
