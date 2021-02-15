@@ -1,4 +1,5 @@
 const { expect } = require("chai");
+const BigNumber = require('bignumber.js');
 const { web3 } = require("hardhat");
 const controllerContract = artifacts.require("../contracts/Controller");
 const oracleContract = artifacts.require("../contracts/Oracle");
@@ -39,7 +40,16 @@ describe("Test Orderbook Creation", function () {
 
 describe("Test Selling/Minting Variance", function () {
   it("Minting variance should create a sell order in the Orderbook", async function () {
-    // Sell 2.85 ETH of variance @ 130 strike for 2 ETH. 
+    // Sell 2.85 ETH of variance @ 130 strike for 2 ETH.
+    var testnum = new BigNumber(500.2);
+    var denominator = new BigNumber(2);
+    denominator = denominator.exponentiatedBy(64);
+    testnum = testnum.multipliedBy(denominator);
+    console.log("BigNumber JS denominator: ", denominator.toString(10));
+    console.log("BigNumber JS string: ", testnum.toString(10));
+    var BNtestnum = web3.utils.toBN(testnum.toString(16));
+    console.log(BNtestnum);
+
     await Controller.sellSwapPosition(0, addr1, 130, web3.utils.toWei("2"), web3.utils.toHex(28.5 * 2 ** 64));
     let result;
     result = await Controller.getOrder(0);

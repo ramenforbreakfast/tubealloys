@@ -3,9 +3,10 @@
 
 const { task } = require("hardhat/config");
 
-require("hardhat-gas-reporter");
+//require("hardhat-gas-reporter");
 require("@nomiclabs/hardhat-truffle5")
 require("@nomiclabs/hardhat-web3");
+require("bignumber.js")
 
 /**
  * @type import('hardhat/config').HardhatUserConfig
