@@ -19,6 +19,14 @@ contract Controller {
 
     Orderbook[] internal deployedBooks;
 
+    modifier onlyOnDeployedBooks(uint256 bookIndex) {
+        require(
+            bookIndex < deployedBooks.length,
+            "Controller: Cannot settle an undeployed orderbook!"
+        );
+        _;
+    }
+
     /**
      * @notice Create a new orderbook for a new variance swap.
      * @param roundEnd UNIX timestamp for end of orderbook
@@ -43,8 +51,11 @@ contract Controller {
      * @notice Settle an entire orderbook, distributing payouts for users to redeem.
      * @param bookIndex index of orderbook being settled
      */
-    function settleSwapBook(uint256 bookIndex) external {
-        Orderbook bookToSettle = getBookByIndex(bookIndex);
+    function settleSwapBook(uint256 bookIndex)
+        external
+        onlyOnDeployedBooks(bookIndex)
+    {
+        Orderbook bookToSettle = deployedBooks[bookIndex];
         require(
             bookToSettle.roundEnd() <= block.timestamp,
             "Controller: Cannot settle swaps before round has ended!"
@@ -91,21 +102,49 @@ contract Controller {
     }
 
     /**
+     * @notice Take in user's desired position parameters and match with open sell orders to fulfill.
+     * @param bookIndex index of orderbook to purchase from
+     * @param buyer address of user purchasing swap position
+     * @param varianceStrike variance strike of swap
+     * @param positionSize units of variance to be purchased (0.1 ETH units) needs to be ABDK 64.64-bit fixed point integer
+     */
+    function buySwapPosition(
+        uint256 bookIndex,
+        address buyer,
+        uint256 varianceStrike,
+        int128 positionSize
+    ) external onlyOnDeployedBooks(bookIndex) {
+        Orderbook currentBook = deployedBooks[bookIndex];
+        require(
+            currentBook.roundEnd() > block.timestamp,
+            "Controller: Cannot purchase swaps for a round that has ended!"
+        );
+
+        uint256 totalPaid =
+            currentBook.fillBuyOrderByUnitAmount(
+                buyer,
+                varianceStrike,
+                positionSize
+            );
+        //pool.transferToPool(buyer, totalPaid);
+    }
+
+    /**
      * @notice Transfer ETH from user into our pool in exchange for an equivalent long and short position for the specified swap. Submits sell order for the long position.
      * @param bookIndex index of orderbook to mint swap for
      * @param minter address of user minting the swap
-     * @param strikeVariance variance strike of swap
+     * @param varianceStrike variance strike of swap
      * @param askPrice asking price of the order in wei
      * @param positionSize units of variance to be sold (0.1 ETH units) needs to be ABDK 64.64-bit fixed point integer
      */
     function sellSwapPosition(
         uint256 bookIndex,
         address minter,
-        uint256 strikeVariance,
+        uint256 varianceStrike,
         uint256 askPrice,
         int128 positionSize
-    ) external {
-        Orderbook currentBook = getBookByIndex(bookIndex);
+    ) external onlyOnDeployedBooks(bookIndex) {
+        Orderbook currentBook = deployedBooks[bookIndex];
         require(
             currentBook.roundEnd() > block.timestamp,
             "Controller: Cannot mint swaps for a round that has ended!"
@@ -115,7 +154,7 @@ contract Controller {
         // collateralSize is collateral in wei (positionSize * 1e17 wei (0.1 ETH))
         uint256 collateral = ABDKMath64x64.mulu(positionSize, 1e17);
 
-        currentBook.sellOrder(minter, strikeVariance, askPrice, positionSize);
+        currentBook.sellOrder(minter, varianceStrike, askPrice, positionSize);
         //pool.transferToPool(minter, collateral);
     }
 
@@ -124,8 +163,11 @@ contract Controller {
      * @param bookIndex index of orderbook swap to redeem positions on
      * @param redeemer address of user redeeming their positions
      */
-    function redeemSwapPositions(uint256 bookIndex, address redeemer) external {
-        Orderbook currentBook = getBookByIndex(bookIndex);
+    function redeemSwapPositions(uint256 bookIndex, address redeemer)
+        external
+        onlyOnDeployedBooks(bookIndex)
+    {
+        Orderbook currentBook = deployedBooks[bookIndex];
         require(
             currentBook.settled() == true,
             "Controller: Cannot redeem swap, round has not been settled!"
@@ -135,37 +177,32 @@ contract Controller {
         //pool.transferToUser(redeemer, settlement);
     }
 
+    /**
+     * @notice Get information about a deployed orderbook from its index
+     * @param bookIndex index of the orderbook
+     * @return address of the orderbook
+     * @return address of the orderbook's oracle
+     * @return orderbook roundStart timestamp
+     * @return orderbook roundEnd timestamp
+     */
     function getBookInfoByIndex(uint256 bookIndex)
         external
         view
+        onlyOnDeployedBooks(bookIndex)
         returns (
+            address,
             address,
             uint256,
             uint256
         )
     {
-        Orderbook currentBook = getBookByIndex(bookIndex);
+        Orderbook currentBook = deployedBooks[bookIndex];
         return (
+            address(currentBook),
             currentBook.bookOracle(),
             currentBook.roundStart(),
             currentBook.roundEnd()
         );
-    }
-
-    /**
-     * @notice Find index of orderbook by address.
-     * @param bookIndex index of orderbook being searched for
-     */
-    function getBookByIndex(uint256 bookIndex)
-        internal
-        view
-        returns (Orderbook)
-    {
-        require(
-            bookIndex <= deployedBooks.length,
-            "Controller: Cannot settle an undeployed orderbook!"
-        );
-        return deployedBooks[bookIndex];
     }
 
     /**

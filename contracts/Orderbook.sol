@@ -210,7 +210,7 @@ contract Orderbook is Ownable {
     /*
      * Fill a buy order from the open orders that we maintain. We go from minimum strike and fill based on the number of units the buyer wants.
      */
-    function fillBuyOrderbyUnitAmount(
+    function fillBuyOrderByUnitAmount(
         address buyer,
         uint256 minStrike,
         int128 unitAmount
@@ -357,7 +357,7 @@ contract Orderbook is Ownable {
         currAddr = addr;
         currAskPrice = askPrice;
         currUnfilled = true;
-        for (i = index; index < openOrders.length; i++) {
+        for (i = index; i < openOrders.length; i++) {
             prevAskPrice = openOrders[i].askPrice; //Keep the old order at this index because it will be added to next one.
             prevId = openOrders[i].vaultId;
             prevAddr = openOrders[i].sellerAddress;
