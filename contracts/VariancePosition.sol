@@ -74,7 +74,7 @@ library VariancePosition {
     }
 
     /*
-    * Set seller payment for user to 0 and return the payment. This represents a seller getting their payout for the open orders that were filled.
+    * Set variance swap payment for user to 0 and return the payment. This represents a user getting their payment for the variance swap.
     */
     function _settleVarianceSwap(UserPositions storage userPositions) internal returns(uint256) {
         uint256 varianceSwapPayment = userPositions.varianceSwapPayout;
@@ -83,7 +83,7 @@ library VariancePosition {
     }
 
     /*
-    * Set seller payment for user to 0 and return the payment. This represents a seller getting their payout for the open orders that were filled.
+    * Set the variance swap payment in the owner's position.
     */
     function _setVarianceSwap(UserPositions storage userPositions, uint256 varianceSwapPayout) internal {
         userPositions.varianceSwapPayout = varianceSwapPayout;

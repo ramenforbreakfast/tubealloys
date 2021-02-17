@@ -136,6 +136,9 @@ contract Orderbook is Ownable {
     function sellOrder(address seller, uint256 strike, uint256 askPrice, int128 positionSize) onlyOwner external {
         require(roundEnd > block.timestamp);
         require(!settled);
+        require(askPrice != 0);
+        require(positionSize != 0);
+        require(strike != 0);
         uint256 index;
 
         //Find if the seller already has a position at this strike. Otherwise, get the index for a new position to be created.
