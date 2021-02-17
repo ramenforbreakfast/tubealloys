@@ -29,10 +29,13 @@ contract Orderbook is Ownable {
 
     address[] public addrPositions; //Addresses that hold positions
 
+    bool public settled; //Has orderbook been settled?
+
     constructor(uint256 startTimestamp, uint256 endTimestamp, uint256 impliedVariance) {
         roundStart = startTimestamp;
         roundEnd = endTimestamp;
         roundImpliedVariance = impliedVariance;
+        settled = false;
     }
 
     /*
@@ -97,9 +100,17 @@ contract Orderbook is Ownable {
     }
 
     /*
+    * Set orderbook internal variable to settled to signify the positions of all users have been calculated.
+    */
+    function settleOrderbook() onlyOwner external {
+        settled = true;
+    }
+
+    /*
     * Get the payout from filled orders for a seller. Set this value internally to 0 to signify the seller has received this payment.
     */
     function getFilledOrderPayment(address owner) onlyOwner external returns(uint256) {
+        require(!settled);
         return VariancePosition._settleOrderPayment(userPositions[owner]);
     }
 
@@ -107,6 +118,7 @@ contract Orderbook is Ownable {
     * Get the total payout for variance swaps. Set this value internally to 0 to signify the seller has received this payment.
     */
     function getVarianceSwapPayment(address owner) onlyOwner external returns(uint256) {
+        require(!settled);
         return VariancePosition._settleVarianceSwap(userPositions[owner]);
     }
 
@@ -114,6 +126,7 @@ contract Orderbook is Ownable {
     * Set the total payout for variance swaps. This is done from Controller smart contract.
     */
     function setVarianceSwapPayment(address owner, uint256 varianceSwapPayment) onlyOwner external {
+        require(!settled);
         VariancePosition._setVarianceSwap(userPositions[owner], varianceSwapPayment);
     }
 
@@ -122,6 +135,7 @@ contract Orderbook is Ownable {
     */
     function sellOrder(address seller, uint256 strike, uint256 askPrice, int128 positionSize) onlyOwner external {
         require(roundEnd > block.timestamp);
+        require(!settled);
         uint256 index;
 
         //Find if the seller already has a position at this strike. Otherwise, get the index for a new position to be created.
@@ -135,18 +149,63 @@ contract Orderbook is Ownable {
     }
 
     /*
-    * Fill a buy order from the open orders that we maintain. We go from minimum strike and fill based on the number of units the buyer wants.
+    * Fill a buy order from the open orders that we maintain. We go from minimum strike and fill based on the max price in ether the user wants to pay.
     */
-    function fillBuyOrderbyUnitAmount(address buyer, uint256 minStrike, int128 unitAmount) onlyOwner external returns(uint256) {
+    function fillBuyOrderbyMaxPrice(address buyer, uint256 minStrike, uint256 maxPrice) onlyOwner external returns(uint256) {
         require(roundEnd > block.timestamp);
+        require(!settled);
+        uint256 i;
+        uint256 currStrike;
+        int128 currLongPositionAmount;
+        uint256 currAskPrice;
+        int128 adjustedAmount;
+        int128 unitsFilled;
+        uint256 buyerPositionIndex;
+        uint256 remainingPosition = maxPrice;
+
+        for(i = 0; i < openOrders.length; i++) {
+            currAskPrice = openOrders[i].askPrice; //Get ask price from order.
+            currStrike = userPositions[openOrders[i].sellerAddress].positions[openOrders[i].vaultId].strike; //Get strike from order.
+            currLongPositionAmount = userPositions[openOrders[i].sellerAddress].positions[openOrders[i].vaultId].longPositionAmount; //Get long position amount available from order.
+            if(remainingPosition == 0) { //If we have filled already desired units from buyer, exit loop.
+                break;
+            } else if(openOrders[i].unfilled && currStrike >= minStrike) { //Check the order is still open and we are at desired minimum strike.
+                unitsFilled = ABDKMath64x64.divu(remainingPosition, currAskPrice);
+                if(unitsFilled >= currLongPositionAmount) {
+                    adjustedAmount = currLongPositionAmount;
+                    openOrders[i].unfilled = false; //Signal order has been filled.
+                } else {
+                    adjustedAmount = unitsFilled;
+                }
+                VariancePosition._removeFromPosition(userPositions[openOrders[i].sellerAddress], adjustedAmount, 0, 0, openOrders[i].vaultId); //Remove the long position amount that has been filled from seller.
+                VariancePosition._addToPosition(userPositions[openOrders[i].sellerAddress], currStrike, 0, 0, ABDKMath64x64.mulu(adjustedAmount, currAskPrice), openOrders[i].vaultId); //Add payout seller gets from buyer for filling this order.
+                buyerPositionIndex = VariancePosition._findPositionIndex(userPositions[buyer], currStrike); //Find if buyer has an open position to add long position to.
+                VariancePosition._addToPosition(userPositions[buyer], currStrike, adjustedAmount, 0, 0, buyerPositionIndex); //Add the long units to buyer position.
+                remainingPosition = remainingPosition.sub(ABDKMath64x64.mulu(adjustedAmount, currAskPrice));
+            }
+        }
+
+        if(maxPrice != remainingPosition) {
+            //Maintain addresses that hold positions
+            addrPositions.push(buyer);
+        }
+
+        return remainingPosition;
+    }
+
+    /*
+    * Get price in wei for buy order from the open orders that we maintain. We go from minimum strike and fill based on the number of units the buyer wants.
+    */
+    function getBuyOrderbyUnitAmount(uint256 minStrike, int128 unitAmount) onlyOwner external view returns(uint256, int128) {
+        require(roundEnd > block.timestamp);
+        require(!settled);
         uint256 i;
         uint256 currStrike;
         uint256 currId;
         int128 currLongPositionAmount;
         uint256 currAskPrice;
         int128 adjustedAmount;
-        uint256 buyerPositionIndex;
-        uint256 totalPaid = 0;
+        uint256 totalPrice = 0;
         address currSeller;
 
         for(i = 0; i < openOrders.length; i++) {
@@ -160,23 +219,15 @@ contract Orderbook is Ownable {
             } else if(openOrders[i].unfilled && currStrike >= minStrike) { //Check the order is still open and we are at desired minimum strike.
                 if(unitAmount >= currLongPositionAmount) { //Check how much the current order can fill based on what is left from buyer units.
                     adjustedAmount = currLongPositionAmount;
-                    openOrders[i].unfilled = false; //Signal order has been filled.
                 } else {
                     adjustedAmount = unitAmount;
                 }
-                VariancePosition._removeFromPosition(userPositions[currSeller], adjustedAmount, 0, 0, currId); //Remove the long position amount that has been filled from seller.
-                VariancePosition._addToPosition(userPositions[currSeller], currStrike, 0, 0, ABDKMath64x64.mulu(adjustedAmount, currAskPrice), currId); //Add payout seller gets from buyer for filling this order.
-                buyerPositionIndex = VariancePosition._findPositionIndex(userPositions[buyer], currStrike); //Find if buyer has an open position to add long position to.
-                VariancePosition._addToPosition(userPositions[buyer], currStrike, adjustedAmount, 0, 0, buyerPositionIndex); //Add the long units to buyer position.
-                totalPaid = totalPaid.add(ABDKMath64x64.mulu(adjustedAmount, currAskPrice));
+                totalPrice = totalPrice.add(ABDKMath64x64.mulu(adjustedAmount, currAskPrice));
                 unitAmount = ABDKMath64x64.sub(unitAmount, adjustedAmount); //Update the remaining buyer units after the transaction performed.
             }
         }
 
-        //Maintain addresses that hold positions
-        addrPositions.push(buyer);
-
-        return totalPaid;
+        return (totalPrice, unitAmount);
     }
 
     /*
@@ -232,7 +283,7 @@ contract Orderbook is Ownable {
         currAddr = addr;
         currAskPrice = askPrice;
         currUnfilled = true;
-        for(i = index; index < openOrders.length; i++) {
+        for(i = index; i < openOrders.length; i++) {
             prevAskPrice = openOrders[i].askPrice; //Keep the old order at this index because it will be added to next one.
             prevId = openOrders[i].vaultId;
             prevAddr = openOrders[i].sellerAddress;
