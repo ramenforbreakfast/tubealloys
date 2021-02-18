@@ -147,6 +147,6 @@ describe("Filling Orders", function () {
 
         expect(totalPaid.div(gwei).toString()).to.be.oneOf([totalSpent.div(gwei).toString(), totalSpent.div(gwei).add(1).toString(), totalSpent.div(gwei).sub(1).toString()]);
 
-        expect(totalSold).to.equal(totalBought);
+        expect(totalSold).to.be.within(totalBought - 1, totalBought + 1);
     });
 });
