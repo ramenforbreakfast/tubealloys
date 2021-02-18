@@ -31,11 +31,20 @@ contract Orderbook is Ownable {
 
     bool public settled; //Has orderbook been settled?
 
+    uint64 constant PAGESIZE = 1000;
+
     constructor(uint256 startTimestamp, uint256 endTimestamp, uint256 impliedVariance) {
         roundStart = startTimestamp;
         roundEnd = endTimestamp;
         roundImpliedVariance = impliedVariance;
         settled = false;
+    }
+
+    /*
+    * Return size of pages used for returning payout information in getBuyOrderbyUnitAmount.
+    */
+    function getPageSize() external pure returns(uint64) {
+        return PAGESIZE;
     }
 
     /*
@@ -199,24 +208,21 @@ contract Orderbook is Ownable {
     /*
     * Get price in wei for buy order from the open orders that we maintain. We go from minimum strike and fill based on the number of units the buyer wants.
     */
-    function getBuyOrderbyUnitAmount(uint256 minStrike, int128 unitAmount) onlyOwner external view returns(uint256, int128) {
+    function getBuyOrderbyUnitAmount(uint256 minStrike, int128 unitAmount) onlyOwner external view returns(uint256, int128, int128 [PAGESIZE] memory, uint256 [PAGESIZE] memory) {
         require(roundEnd > block.timestamp);
         require(!settled);
         uint256 i;
         uint256 currStrike;
-        uint256 currId;
         int128 currLongPositionAmount;
-        uint256 currAskPrice;
         int128 adjustedAmount;
         uint256 totalPrice = 0;
-        address currSeller;
+        int128[PAGESIZE] memory unitsToBuy;
+        uint256[PAGESIZE] memory strikesToBuy;
+        uint256 ct = 0;
 
-        for(i = 0; i < openOrders.length; i++) {
-            currId = openOrders[i].vaultId; //Get position index from order.
-            currSeller = openOrders[i].sellerAddress; //Get seller from order.
-            currAskPrice = openOrders[i].askPrice; //Get ask price from order.
-            currStrike = userPositions[currSeller].positions[currId].strike; //Get strike from order.
-            currLongPositionAmount = userPositions[currSeller].positions[currId].longPositionAmount; //Get long position amount available from order.
+        for(i = 0; i < openOrders.length && ct < PAGESIZE; i++) {
+            currStrike = userPositions[openOrders[i].sellerAddress].positions[openOrders[i].vaultId].strike; //Get strike from order.
+            currLongPositionAmount = userPositions[openOrders[i].sellerAddress].positions[openOrders[i].vaultId].longPositionAmount; //Get long position amount available from order.
             if(unitAmount == 0) { //If we have filled already desired units from buyer, exit loop.
                 break;
             } else if(openOrders[i].unfilled && currStrike >= minStrike) { //Check the order is still open and we are at desired minimum strike.
@@ -225,12 +231,14 @@ contract Orderbook is Ownable {
                 } else {
                     adjustedAmount = unitAmount;
                 }
-                totalPrice = totalPrice.add(ABDKMath64x64.mulu(adjustedAmount, currAskPrice));
+                totalPrice = totalPrice.add(ABDKMath64x64.mulu(adjustedAmount, openOrders[i].askPrice));
                 unitAmount = ABDKMath64x64.sub(unitAmount, adjustedAmount); //Update the remaining buyer units after the transaction performed.
+                unitsToBuy[ct] = adjustedAmount; //Maintain the long units and strikes that can be filled
+                strikesToBuy[ct++] = currStrike;
             }
         }
 
-        return (totalPrice, unitAmount);
+        return (totalPrice, unitAmount, unitsToBuy, strikesToBuy);
     }
 
     /*

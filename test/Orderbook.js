@@ -145,7 +145,7 @@ describe("Filling Orders", function () {
             totalPaid = totalPaid.add(filledOrder);
         }
 
-        expect(totalPaid.div(gwei)).to.equal(totalSpent.div(gwei));
+        expect(totalPaid.div(gwei).toString()).to.be.oneOf([totalSpent.div(gwei).toString(), totalSpent.div(gwei).add(1).toString(), totalSpent.div(gwei).sub(1).toString()]);
 
         expect(totalSold).to.equal(totalBought);
     });
