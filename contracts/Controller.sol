@@ -67,7 +67,7 @@ contract Controller {
         uint256 currStrike;
         int128 currLong;
         int128 currShort;
-        uint256 settlementAmount = 0;
+        uint256 settlementAmount;
         uint256 realizedVar =
             getRealizedVariance(
                 bookToSettle.bookOracle(),
