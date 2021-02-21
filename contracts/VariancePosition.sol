@@ -108,6 +108,16 @@ library VariancePosition {
     }
 
     /*
+     * Set seller payment for user to 0 and return the payment. This represents a seller getting their payout for the open orders that were filled.
+     */
+    function _setUserSettlement(
+        UserPositions storage userPositions,
+        uint256 _userSettlement
+    ) internal {
+        userPositions.userSettlement = _userSettlement;
+    }
+
+    /*
      * Find the index of a position given the realizec variance strike and ask price. Otherwise, return position length.
      */
     function _findPositionIndex(

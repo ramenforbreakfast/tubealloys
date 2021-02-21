@@ -15,7 +15,6 @@ contract Controller {
     using SafeMath for uint256;
 
     //FundsPoolInterface public pool;
-    OracleInterface public oracle;
 
     Orderbook[] internal deployedBooks;
 
@@ -36,7 +35,7 @@ contract Controller {
         uint256 roundStart,
         uint256 roundEnd
     ) external {
-        oracle = OracleInterface(oracleAddress);
+        OracleInterface oracle = OracleInterface(oracleAddress);
         Orderbook newSwapBook =
             new Orderbook(
                 roundStart,
@@ -61,14 +60,14 @@ contract Controller {
             "Controller: Cannot settle swaps before round has ended!"
         );
 
-        uint256 i = 0;
-        uint256 j = 0;
+        uint256 i;
+        uint256 j;
         address currAddress;
         uint256 currAddressLength;
         uint256 currStrike;
         int128 currLong;
         int128 currShort;
-        uint256 settlementAmount;
+        uint256 settlementAmount = 0;
         uint256 realizedVar =
             getRealizedVariance(
                 bookToSettle.bookOracle(),
@@ -86,7 +85,7 @@ contract Controller {
                     currAddress,
                     j
                 );
-                settlementAmount.add(
+                settlementAmount = settlementAmount.add(
                     Settlement.calcPositionSettlement(
                         realizedVar,
                         currStrike,
@@ -98,35 +97,113 @@ contract Controller {
             bookToSettle.setUserSettlement(currAddress, settlementAmount);
         }
         // Possibly we should store a settled value? Would be useful to keep track of whether an orderbook has been settled
-        bookToSettle.setSettled(true);
+        bookToSettle.settleOrderBook();
     }
 
     /**
-     * @notice Take in user's desired position parameters and match with open sell orders to fulfill.
+     * @notice Return amount owed to user after settlement of all orderbook swaps.
+     * @param bookIndex index of orderbook swap to redeem positions on
+     * @param user user to return settlement for
+     * @return amount in wei owed to user
+     */
+    function getSettlementForUser(uint256 bookIndex, address user)
+        external
+        view
+        onlyOnDeployedBooks(bookIndex)
+        returns (uint256)
+    {
+        Orderbook currentBook = deployedBooks[bookIndex];
+        //require(
+        //    currentBook.settled() == true,
+        //    "Controller: Cannot query settlement amount for an unsettled orderbook!"
+        //);
+
+        uint256 settlement = currentBook.getUserSettlement(user);
+        return settlement;
+    }
+
+    /**
+     * @notice Take in user's desired position parameters and matches them with open sell orders, returns a price quote for user's position.
      * @param bookIndex index of orderbook to purchase from
-     * @param buyer address of user purchasing swap position
      * @param varianceStrike variance strike of swap
      * @param positionSize units of variance to be purchased (0.1 ETH units) needs to be ABDK 64.64-bit fixed point integer
+     * @return uint256 total cost in wei for position quote, int128 64.64 total amount of variance units for position quote
+     */
+    function getQuoteForPosition(
+        uint256 bookIndex,
+        uint256 varianceStrike,
+        int128 positionSize
+    ) external view onlyOnDeployedBooks(bookIndex) returns (uint256, int128) {
+        Orderbook currentBook = deployedBooks[bookIndex];
+        //require(
+        //    currentBook.roundEnd() > block.timestamp,
+        //    "Controller: Cannot purchase swaps for a round that has ended!"
+        //);
+        uint256 totalPaid;
+        int128 totalUnits;
+        (totalPaid, totalUnits) = currentBook.getBuyOrderbyUnitAmount(
+            varianceStrike,
+            positionSize
+        );
+        //pool.transferToPool(buyer, totalPaid);
+        return (totalPaid, totalUnits);
+    }
+
+    /**
+     * @notice Wrapper function to call orderbook getPosition function, returns user's position at selected index
+     * @param bookIndex index of orderbook being queried
+     * @param userAddress address of the user position belongs to
+     * @param positionIndex index of user position
+     * @return uint256 user strike, int128 64.64 user long position, int 128 64.64 user short position
+     */
+    function getUserPosition(
+        uint256 bookIndex,
+        address userAddress,
+        uint256 positionIndex
+    )
+        external
+        view
+        onlyOnDeployedBooks(bookIndex)
+        returns (
+            uint256,
+            int128,
+            int128
+        )
+    {
+        Orderbook currentBook = deployedBooks[bookIndex];
+        uint256 userStrike;
+        int128 userLong;
+        int128 userShort;
+        (userStrike, userLong, userShort) = currentBook.getPosition(
+            userAddress,
+            positionIndex
+        );
+        return (userStrike, userLong, userShort);
+    }
+
+    /**
+     * @notice Take in user's desired position parameters and matches them with open sell orders, returns a price quote for user's position.
+     * @param bookIndex index of orderbook to purchase from
+     * @param buyer address of user purchasing the swap
+     * @param varianceStrike variance strike of swap
+     * @param payment amount offered by the buyer to pay for their position.
+     * @return uint256 amount in wei returned the user for orders that could not be purchased.
      */
     function buySwapPosition(
         uint256 bookIndex,
         address buyer,
         uint256 varianceStrike,
-        int128 positionSize
-    ) external onlyOnDeployedBooks(bookIndex) {
+        uint256 payment
+    ) external onlyOnDeployedBooks(bookIndex) returns (uint256) {
         Orderbook currentBook = deployedBooks[bookIndex];
         require(
             currentBook.roundEnd() > block.timestamp,
             "Controller: Cannot purchase swaps for a round that has ended!"
         );
-
-        uint256 totalPaid =
-            currentBook.fillBuyOrderByUnitAmount(
-                buyer,
-                varianceStrike,
-                positionSize
-            );
+        uint256 remainder =
+            currentBook.fillBuyOrderbyMaxPrice(buyer, varianceStrike, payment);
         //pool.transferToPool(buyer, totalPaid);
+        return remainder;
     }
 
     /**
@@ -192,6 +269,7 @@ contract Controller {
         returns (
             address,
             address,
+            address,
             uint256,
             uint256
         )
@@ -199,25 +277,11 @@ contract Controller {
         Orderbook currentBook = deployedBooks[bookIndex];
         return (
             address(currentBook),
+            currentBook.owner(),
             currentBook.bookOracle(),
             currentBook.roundStart(),
             currentBook.roundEnd()
         );
-    }
-
-    /**
-     * @notice Checks with oracle if realized variance value at round end date is valid.
-     * @param oracleAddress address of oracle to determine variance validity from
-     * @param roundEnd date that the round ends on
-     */
-    function isSettlementAllowed(address oracleAddress, uint256 roundEnd)
-        internal
-        returns (bool)
-    {
-        oracle = OracleInterface(oracleAddress);
-        // boilerplate call to an oracle to determine if realized variance obtained is valid
-        bool isRealizedFinalized = oracle.isDisputePeriodOver(roundEnd);
-        return isRealizedFinalized;
     }
 
     /**
@@ -230,8 +294,8 @@ contract Controller {
         address oracleAddress,
         uint256 roundStart,
         uint256 roundEnd
-    ) internal returns (uint256) {
-        oracle = OracleInterface(oracleAddress);
+    ) internal view returns (uint256) {
+        OracleInterface oracle = OracleInterface(oracleAddress);
         uint256 realizedVar = oracle.getRealized(roundStart, roundEnd);
         return realizedVar;
     }
