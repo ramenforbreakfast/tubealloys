@@ -37,10 +37,12 @@ contract Orderbook is Ownable {
     constructor(
         uint256 startTimestamp,
         uint256 endTimestamp,
+        address oracle,
         uint256 impliedVariance
     ) {
         roundStart = startTimestamp;
         roundEnd = endTimestamp;
+        bookOracle = oracle;
         roundImpliedVariance = impliedVariance;
         settled = false;
     }
