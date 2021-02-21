@@ -11,8 +11,8 @@ contract Orderbook is Ownable {
     //Struct that holds information necessary to check for an open order.
     struct Order {
         uint256 askPrice; //Ask price in wei per unit for the order.
-        uint256 vaultId; //Index for the seller's position.
-        address sellerAddress; //Address of the seller.
+        uint256 posIdx; //Index for the seller's position.
+        address seller; //Address of the seller.
         bool unfilled; //Has order been filled?
     }
 
@@ -20,35 +20,44 @@ contract Orderbook is Ownable {
 
     Order[] public openOrders; //Array of all orders sorted first by strike and then ask price.
 
-    uint256 public roundEnd; //round end timestamp for this orderbook
-
     uint256 public roundStart; //round start timestamp for this orderbook
+
+    uint256 public roundEnd; //round end timestamp for this orderbook
 
     uint256 public roundImpliedVariance; //Implied Variance used for this orderbook
 
+    address public bookOracle; //Oracle used for querying variance
+
     address[] public userAddresses; //Addresses that hold positions
 
-    address public bookOracle;
-
     bool public settled; //Has orderbook been settled?
+
+    uint64 constant PAGESIZE = 1000;
 
     constructor(
         uint256 startTimestamp,
         uint256 endTimestamp,
-        address oracleAddress,
+        address oracle,
         uint256 impliedVariance
     ) {
         roundStart = startTimestamp;
         roundEnd = endTimestamp;
-        bookOracle = oracleAddress;
+        bookOracle = oracle;
         roundImpliedVariance = impliedVariance;
         settled = false;
     }
 
     /*
+     * Return size of pages used for returning payout information in getBuyOrderbyUnitAmount.
+     */
+    function getPageSize() external pure returns (uint64) {
+        return PAGESIZE;
+    }
+
+    /*
      * Get the length of the orders maintained.
      */
-    function getNumberofOrders() external view returns (uint256) {
+    function getNumberOfOrders() external view returns (uint256) {
         return openOrders.length;
     }
 
@@ -66,13 +75,13 @@ contract Orderbook is Ownable {
     {
         require(index < openOrders.length);
         Order memory currOrder = openOrders[index];
-        return (currOrder.askPrice, currOrder.vaultId, currOrder.sellerAddress);
+        return (currOrder.askPrice, currOrder.posIdx, currOrder.seller);
     }
 
     /*
      * Get the number of positions a specific address holds.
      */
-    function getNumberofUserPositions(address addr)
+    function getNumberOfUserPositions(address addr)
         external
         view
         returns (uint256)
@@ -105,46 +114,12 @@ contract Orderbook is Ownable {
     /*
      * Display the payout from filled orders for a seller.
      */
-    function displayFilledOrderPayout(address owner)
+    function getFilledOrderPayment(address owner)
         external
         view
         returns (uint256)
     {
         return userPositions[owner].filledOrderPayment;
-    }
-
-    /*
-     * Get total number of address that hold positions.
-     */
-    function getNumberofActiveAddresses() external view returns (uint256) {
-        return userAddresses.length;
-    }
-
-    /*
-     * Get address by index.
-     */
-    function getAddrbyIdx(uint256 index) external view returns (address) {
-        require(index < userAddresses.length);
-        return userAddresses[index];
-    }
-
-    /*
-     * Set orderbook internal variable to settled to signify the positions of all users have been calculated.
-     */
-    function settleOrderBook() external onlyOwner {
-        settled = true;
-    }
-
-    /*
-     * Get the payout from filled orders for a seller. Set this value internally to 0 to signify the seller has received this payment.
-     */
-    function getFilledOrderPayment(address owner)
-        external
-        onlyOwner
-        returns (uint256)
-    {
-        require(!settled);
-        return VariancePosition._settleOrderPayment(userPositions[owner]);
     }
 
     /*
@@ -155,18 +130,64 @@ contract Orderbook is Ownable {
     }
 
     /*
+     * Get total number of address that hold positions.
+     */
+    function getNumberOfActiveAddresses() external view returns (uint256) {
+        return userAddresses.length;
+    }
+
+    /*
+     * Get address by index.
+     */
+    function getAddrByIdx(uint256 index) external view returns (address) {
+        require(index < userAddresses.length);
+        return userAddresses[index];
+    }
+
+    /*
+     * Set orderbook internal variable to settled to signify the positions of all users have been calculated.
+     */
+    function settleOrderbook() external onlyOwner {
+        settled = true;
+    }
+
+    /*
+     * Get the payout from filled orders for a seller. Set this value internally to 0 to signify the seller has received this payment.
+     */
+    function redeemFilledOrderPayment(address owner)
+        external
+        onlyOwner
+        returns (uint256)
+    {
+        require(!settled);
+        return VariancePosition._settleOrderPayment(userPositions[owner]);
+    }
+
+    /*
+     * Get the total payout for variance swaps. Set this value internally to 0 to signify the seller has received this payment.
+     */
+    function redeemUserSettlement(address owner)
+        external
+        onlyOwner
+        returns (uint256)
+    {
+        require(!settled);
+        return VariancePosition._redeemUserSettlement(userPositions[owner]);
+    }
+
+    /*
      * Set the total payout for variance swaps. This is done from Controller smart contract.
      */
-    function setUserSettlement(address owner, uint256 swapPayout)
+    function setUserSettlement(address owner, uint256 settlement)
         external
         onlyOwner
     {
         require(!settled);
-        VariancePosition._setUserSettlement(userPositions[owner], swapPayout);
+        VariancePosition._setUserSettlement(userPositions[owner], settlement);
     }
 
-    function setBookRoundEnd(uint256 timestamp) external {
-        roundEnd = timestamp;
+    function setBookRoundEnd(uint256 date) external {
+        roundEnd = date;
     }
 
     /*
@@ -180,6 +201,9 @@ contract Orderbook is Ownable {
     ) external onlyOwner {
         require(roundEnd > block.timestamp);
         require(!settled);
+        require(askPrice != 0);
+        require(positionSize != 0);
+        require(strike != 0);
         uint256 index;
 
         //Find if the seller already has a position at this strike. Otherwise, get the index for a new position to be created.
@@ -205,7 +229,7 @@ contract Orderbook is Ownable {
     /*
      * Fill a buy order from the open orders that we maintain. We go from minimum strike and fill based on the max price in ether the user wants to pay.
      */
-    function fillBuyOrderbyMaxPrice(
+    function fillBuyOrderByMaxPrice(
         address buyer,
         uint256 minStrike,
         uint256 maxPrice
@@ -223,12 +247,12 @@ contract Orderbook is Ownable {
 
         for (i = 0; i < openOrders.length; i++) {
             currAskPrice = openOrders[i].askPrice; //Get ask price from order.
-            currStrike = userPositions[openOrders[i].sellerAddress].positions[
-                openOrders[i].vaultId
+            currStrike = userPositions[openOrders[i].seller].positions[
+                openOrders[i].posIdx
             ]
                 .strike; //Get strike from order.
-            currLongPositionAmount = userPositions[openOrders[i].sellerAddress]
-                .positions[openOrders[i].vaultId]
+            currLongPositionAmount = userPositions[openOrders[i].seller]
+                .positions[openOrders[i].posIdx]
                 .longPositionAmount; //Get long position amount available from order.
             if (remainingPosition == 0) {
                 //If we have filled already desired units from buyer, exit loop.
@@ -246,19 +270,19 @@ contract Orderbook is Ownable {
                     adjustedAmount = unitsFilled;
                 }
                 VariancePosition._removeFromPosition(
-                    userPositions[openOrders[i].sellerAddress],
+                    userPositions[openOrders[i].seller],
                     adjustedAmount,
                     0,
                     0,
-                    openOrders[i].vaultId
+                    openOrders[i].posIdx
                 ); //Remove the long position amount that has been filled from seller.
                 VariancePosition._addToPosition(
-                    userPositions[openOrders[i].sellerAddress],
+                    userPositions[openOrders[i].seller],
                     currStrike,
                     0,
                     0,
                     ABDKMath64x64.mulu(adjustedAmount, currAskPrice),
-                    openOrders[i].vaultId
+                    openOrders[i].posIdx
                 ); //Add payout seller gets from buyer for filling this order.
                 buyerPositionIndex = VariancePosition._findPositionIndex(
                     userPositions[buyer],
@@ -289,29 +313,35 @@ contract Orderbook is Ownable {
     /*
      * Get price in wei for buy order from the open orders that we maintain. We go from minimum strike and fill based on the number of units the buyer wants.
      */
-    function getBuyOrderbyUnitAmount(uint256 minStrike, int128 unitAmount)
+    function getBuyOrderByUnitAmount(uint256 minStrike, int128 unitAmount)
         external
         view
         onlyOwner
-        returns (uint256, int128)
+        returns (
+            uint256,
+            int128,
+            int128[PAGESIZE] memory,
+            uint256[PAGESIZE] memory
+        )
     {
         require(roundEnd > block.timestamp);
         require(!settled);
         uint256 i;
         uint256 currStrike;
-        uint256 currId;
         int128 currLongPositionAmount;
-        uint256 currAskPrice;
         int128 adjustedAmount;
         uint256 totalPrice = 0;
-        address currSeller;
+        int128[PAGESIZE] memory unitsToBuy;
+        uint256[PAGESIZE] memory strikesToBuy;
+        uint256 ct = 0;
 
-        for (i = 0; i < openOrders.length; i++) {
-            currId = openOrders[i].vaultId; //Get position index from order.
-            currSeller = openOrders[i].sellerAddress; //Get seller from order.
-            currAskPrice = openOrders[i].askPrice; //Get ask price from order.
-            currStrike = userPositions[currSeller].positions[currId].strike; //Get strike from order.
-            currLongPositionAmount = userPositions[currSeller].positions[currId]
+        for (i = 0; i < openOrders.length && ct < PAGESIZE; i++) {
+            currStrike = userPositions[openOrders[i].seller].positions[
+                openOrders[i].posIdx
+            ]
+                .strike; //Get strike from order.
+            currLongPositionAmount = userPositions[openOrders[i].seller]
+                .positions[openOrders[i].posIdx]
                 .longPositionAmount; //Get long position amount available from order.
             if (unitAmount == 0) {
                 //If we have filled already desired units from buyer, exit loop.
@@ -325,13 +355,15 @@ contract Orderbook is Ownable {
                     adjustedAmount = unitAmount;
                 }
                 totalPrice = totalPrice.add(
-                    ABDKMath64x64.mulu(adjustedAmount, currAskPrice)
+                    ABDKMath64x64.mulu(adjustedAmount, openOrders[i].askPrice)
                 );
                 unitAmount = ABDKMath64x64.sub(unitAmount, adjustedAmount); //Update the remaining buyer units after the transaction performed.
+                unitsToBuy[ct] = adjustedAmount; //Maintain the long units and strikes that can be filled
+                strikesToBuy[ct++] = currStrike;
             }
         }
 
-        return (totalPrice, unitAmount);
+        return (totalPrice, unitAmount, unitsToBuy, strikesToBuy);
     }
 
     /*
@@ -341,7 +373,7 @@ contract Orderbook is Ownable {
         address owner,
         uint256 strike,
         uint256 askPrice,
-        uint256 vaultId
+        uint256 posIdx
     ) internal {
         uint256 i;
         uint256 currStrike;
@@ -352,13 +384,13 @@ contract Orderbook is Ownable {
         uint256 orderSize = openOrders.length;
 
         if (orderSize == 0) {
-            openOrders.push(Order(askPrice, vaultId, owner, true)); //If this is first order, just push it into the struct.
+            openOrders.push(Order(askPrice, posIdx, owner, true)); //If this is first order, just push it into the struct.
             return;
         }
 
         for (i = 0; i < orderSize; i++) {
-            currAddr = openOrders[i].sellerAddress; //Get seller from order.
-            currId = openOrders[i].vaultId; //Get position index from order.
+            currAddr = openOrders[i].seller; //Get seller from order.
+            currId = openOrders[i].posIdx; //Get position index from order.
             currAskPrice = openOrders[i].askPrice; //Get ask price from order.
             currUnfilled = openOrders[i].unfilled; //Get filled status from order
             currStrike = userPositions[currAddr].positions[currId].strike; //Get strike from order.
@@ -374,10 +406,10 @@ contract Orderbook is Ownable {
                 strike < currStrike ||
                 (strike == currStrike && askPrice < currAskPrice)
             ) {
-                _addNewOrder(owner, askPrice, vaultId, i); //Add new order into array in the first index where it has either lower strike or same strike but lower ask price.
+                _addNewOrder(owner, askPrice, posIdx, i); //Add new order into array in the first index where it has either lower strike or same strike but lower ask price.
                 break;
             } else if (i == orderSize - 1) {
-                openOrders.push(Order(askPrice, vaultId, owner, true)); //If at the last entry in the orders, push this at the end.
+                openOrders.push(Order(askPrice, posIdx, owner, true)); //If at the last entry in the orders, push this at the end.
             }
         }
     }
@@ -388,7 +420,7 @@ contract Orderbook is Ownable {
     function _addNewOrder(
         address addr,
         uint256 askPrice,
-        uint256 vaultId,
+        uint256 posIdx,
         uint256 index
     ) internal {
         uint256 i;
@@ -402,18 +434,18 @@ contract Orderbook is Ownable {
         bool prevUnfilled;
 
         openOrders.push(Order(0, 0, address(0), false)); //Push one new empty order to the orderbook struct. This will get filled by the order shifted to the right.
-        currId = vaultId; //Order parameters to be added at the starting index.
+        currId = posIdx; //Order parameters to be added at the starting index.
         currAddr = addr;
         currAskPrice = askPrice;
         currUnfilled = true;
         for (i = index; i < openOrders.length; i++) {
             prevAskPrice = openOrders[i].askPrice; //Keep the old order at this index because it will be added to next one.
-            prevId = openOrders[i].vaultId;
-            prevAddr = openOrders[i].sellerAddress;
+            prevId = openOrders[i].posIdx;
+            prevAddr = openOrders[i].seller;
             prevUnfilled = openOrders[i].unfilled;
             openOrders[i].askPrice = currAskPrice; //Update the current order to the one before it or the new order being inserted.
-            openOrders[i].vaultId = currId;
-            openOrders[i].sellerAddress = currAddr;
+            openOrders[i].posIdx = currId;
+            openOrders[i].seller = currAddr;
             openOrders[i].unfilled = currUnfilled;
             currId = prevId; //Store the old order as current because it will replace the next one.
             currAddr = prevAddr;

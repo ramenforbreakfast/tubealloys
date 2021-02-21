@@ -211,9 +211,9 @@ describe("Test Controller Contract", function () {
 
   it("Testing retrieving a user's positions", async function () {
     let Orderbook = await ethers.getContractAt("Orderbook", newBookAddress, owner);
-    let addr1Length = await Orderbook.getNumberofUserPositions(addr1.address);
-    let addr2Length = await Orderbook.getNumberofUserPositions(addr2.address);
-    let addr3Length = await Orderbook.getNumberofUserPositions(addr3.address);
+    let addr1Length = await Orderbook.getNumberOfUserPositions(addr1.address);
+    let addr2Length = await Orderbook.getNumberOfUserPositions(addr2.address);
+    let addr3Length = await Orderbook.getNumberOfUserPositions(addr3.address);
 
     let userStrike, userLong, userShort;
     console.log("Address 1 has " + addr1Length + "positions");
@@ -242,17 +242,17 @@ describe("Test Controller Contract", function () {
     await Orderbook.setBookRoundEnd(Math.round(Date.now() / 1000));
     totalSettlement = await Controller.settleSwapBook(0);
 
-    let addr1Length = await Orderbook.getNumberofUserPositions(addr1.address);
-    let addr2Length = await Orderbook.getNumberofUserPositions(addr2.address);
-    let addr3Length = await Orderbook.getNumberofUserPositions(addr3.address);
+    let addr1Length = await Orderbook.getNumberOfUserPositions(addr1.address);
+    let addr2Length = await Orderbook.getNumberOfUserPositions(addr2.address);
+    let addr3Length = await Orderbook.getNumberOfUserPositions(addr3.address);
     let currAddress;
     console.log("Address 1: ", addr1.address);
     console.log("Address 2: ", addr2.address);
     console.log("Address 3: ", addr3.address);
-    let numberOfAddresses = await Orderbook.getNumberofActiveAddresses();
+    let numberOfAddresses = await Orderbook.getNumberOfActiveAddresses();
     console.log("Number of Addresses Returned by Orderbook: ", Number(numberOfAddresses));
     for (i = 0; i < Number(numberOfAddresses); i++) {
-      currAddress = await Orderbook.getAddrbyIdx(i);
+      currAddress = await Orderbook.getAddrByIdx(i);
       console.log(currAddress);
     }
 

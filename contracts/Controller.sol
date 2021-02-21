@@ -16,6 +16,8 @@ contract Controller {
 
     //FundsPoolInterface public pool;
 
+    uint64 constant PAGESIZE = 1000;
+
     Orderbook[] internal deployedBooks;
 
     modifier onlyOnDeployedBooks(uint256 bookIndex) {
@@ -74,10 +76,10 @@ contract Controller {
                 bookToSettle.roundStart(),
                 bookToSettle.roundEnd()
             );
-        for (i = 0; i < bookToSettle.getNumberofActiveAddresses(); i++) {
+        for (i = 0; i < bookToSettle.getNumberOfActiveAddresses(); i++) {
             settlementAmount = 0;
-            currAddress = bookToSettle.getAddrbyIdx(i);
-            currAddressLength = bookToSettle.getNumberofUserPositions(
+            currAddress = bookToSettle.getAddrByIdx(i);
+            currAddressLength = bookToSettle.getNumberOfUserPositions(
                 currAddress
             );
             for (j = 0; j < currAddressLength; j++) {
@@ -97,7 +99,7 @@ contract Controller {
             bookToSettle.setUserSettlement(currAddress, settlementAmount);
         }
         // Possibly we should store a settled value? Would be useful to keep track of whether an orderbook has been settled
-        bookToSettle.settleOrderBook();
+        bookToSettle.settleOrderbook();
     }
 
     /**
@@ -141,10 +143,10 @@ contract Controller {
         //);
         uint256 totalPaid;
         int128 totalUnits;
-        (totalPaid, totalUnits) = currentBook.getBuyOrderbyUnitAmount(
-            varianceStrike,
-            positionSize
-        );
+        int128[PAGESIZE] memory unitsToBuy;
+        uint256[PAGESIZE] memory strikesToBuy;
+        (totalPaid, totalUnits, unitsToBuy, strikesToBuy) = currentBook
+            .getBuyOrderByUnitAmount(varianceStrike, positionSize);
         //pool.transferToPool(buyer, totalPaid);
         return (totalPaid, totalUnits);
     }
@@ -201,7 +203,7 @@ contract Controller {
             "Controller: Cannot purchase swaps for a round that has ended!"
         );
         uint256 remainder =
-            currentBook.fillBuyOrderbyMaxPrice(buyer, varianceStrike, payment);
+            currentBook.fillBuyOrderByMaxPrice(buyer, varianceStrike, payment);
         //pool.transferToPool(buyer, totalPaid);
         return remainder;
     }
@@ -250,7 +252,7 @@ contract Controller {
             "Controller: Cannot redeem swap, round has not been settled!"
         );
 
-        uint256 settlement = currentBook.getUserSettlement(redeemer);
+        uint256 settlement = currentBook.redeemUserSettlement(redeemer);
         //pool.transferToUser(redeemer, settlement);
     }
 
