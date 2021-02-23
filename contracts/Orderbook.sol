@@ -82,7 +82,7 @@ contract Orderbook is Ownable {
      * Get the number of positions a specific address holds.
      */
     function getNumberOfUserPositions(address addr)
-        external
+        public
         view
         returns (uint256)
     {
@@ -219,7 +219,9 @@ contract Orderbook is Ownable {
         //Add this new sell order to the orderbook.
         _addToOrderbook(seller, strike, askPrice, index);
         //Maintain addresses that hold positions
-        userAddresses.push(seller);
+        if(getNumberOfUserPositions(seller) == 0) {
+            userAddresses.push(seller);
+        }
     }
 
     /*
@@ -298,7 +300,7 @@ contract Orderbook is Ownable {
             }
         }
 
-        if (maxPrice != remainingPosition) {
+        if (maxPrice != remainingPosition && getNumberOfUserPositions(buyer) == 0) {
             //Maintain addresses that hold positions
             userAddresses.push(buyer);
         }

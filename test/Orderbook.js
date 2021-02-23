@@ -10,6 +10,7 @@ let addr3;
 let addr4;
 let addr5;
 let addr6;
+let addr7;
 
 BigNumber.set({ DECIMAL_PLACES: 16 });
 
@@ -66,14 +67,14 @@ function makeBuyStruct(addr, maxStrike, maxAmount) {
 }
 
 beforeEach(async function () {
-    [owner, addr1, addr2, addr3, addr4, addr5, addr6] = await ethers.getSigners();
+    [owner, addr1, addr2, addr3, addr4, addr5, addr6, addr7] = await ethers.getSigners();
     startDate = new Date('2021.04.03').getTime() / 1000;
     endDate = new Date('2021.04.10').getTime() / 1000;
     roundIV = 10;
 
     const Contract = await ethers.getContractFactory("Orderbook");
 
-    Orderbook = await Contract.deploy(startDate, endDate, roundIV);
+    Orderbook = await Contract.deploy(startDate, endDate, addr7.address, roundIV);
     await Orderbook.deployed();
 });
 
