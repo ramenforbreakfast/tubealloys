@@ -17,11 +17,11 @@ contract Pool is Ownable {
         return _balances[user];
     }
 
-    function deposit() public payable {
+    function deposit() external payable {
         _balances[msg.sender] = _balances[msg.sender].add(msg.value);
     }
 
-    function withdraw(uint256 amount) public {
+    function withdraw(uint256 amount) external {
         require(_balances[msg.sender] >= amount);
 
         _balances[msg.sender] = _balances[msg.sender].sub(amount);
