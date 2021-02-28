@@ -55,6 +55,23 @@ contract Orderbook is Ownable {
     }
 
     /*
+     * Return intialized values of orderbook
+     */
+
+    function getOrderbookInfo()
+        external
+        view
+        returns (
+            uint256,
+            uint256,
+            address,
+            uint256
+        )
+    {
+        return (roundStart, roundEnd, bookOracle, roundImpliedVariance);
+    }
+
+    /*
      * Get the length of the orders maintained.
      */
     function getNumberOfOrders() external view returns (uint256) {
@@ -142,6 +159,10 @@ contract Orderbook is Ownable {
     function getAddrByIdx(uint256 index) external view returns (address) {
         require(index < userAddresses.length);
         return userAddresses[index];
+    }
+
+    function isSettled() external view returns (bool) {
+        return settled;
     }
 
     /*
