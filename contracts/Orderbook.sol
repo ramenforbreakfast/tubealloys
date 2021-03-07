@@ -239,7 +239,7 @@ contract Orderbook is Ownable {
         int128 currLongPositionAmount;
         uint256 currAskPrice;
         int128 adjustedAmount;
-        int128 unitsFilled;
+        int128 unitsToFill;
         uint256 buyerPositionIndex;
         uint256 remainingPosition = maxPrice;
 
@@ -257,15 +257,15 @@ contract Orderbook is Ownable {
                 break;
             } else if (openOrders[i].unfilled && currStrike >= minStrike) {
                 //Check the order is still open and we are at desired minimum strike.
-                unitsFilled = ABDKMath64x64.divu(
+                unitsToFill = ABDKMath64x64.divu(
                     remainingPosition,
                     currAskPrice
                 );
-                if (unitsFilled >= currLongPositionAmount) {
+                if (unitsToFill >= currLongPositionAmount) {
                     adjustedAmount = currLongPositionAmount;
                     openOrders[i].unfilled = false; //Signal order has been filled.
                 } else {
-                    adjustedAmount = unitsFilled;
+                    adjustedAmount = unitsToFill;
                 }
                 VariancePosition._removeFromPosition(
                     userPositions[openOrders[i].seller],

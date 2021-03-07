@@ -107,7 +107,7 @@ describe("Filling Orders", function () {
     it("Add Sell Orders, fill some and check bought amount is equal to sold amount", async function () {
         let buyOrder, filledOrder, sellers, position, addresses;
         let i, i2, ct, maxStrike, totalBought, totalSold, plen;
-        let totalPaid, totalSpent, gwei;
+        let totalPaid, totalSpent, gwei, remainingPosition;
         addresses = [addr1, addr2, addr3, addr4, addr5, addr6];
         sellers = [];
         maxStrike = 0;
@@ -129,11 +129,13 @@ describe("Filling Orders", function () {
         for (i = Math.floor(addresses.length / 2); i < addresses.length; i++) {
             buyer = makeBuyStruct(addresses[i].address, maxStrike, sellers[ct].sellAmount);
             buyOrder = await Orderbook.getBuyOrderByUnitAmount(buyer.strike, buyer.maxAmount);
-            await Orderbook.fillBuyOrderByMaxPrice(buyer.address, buyer.strike, buyOrder[0]);
+            remainingPosition = await Orderbook.fillBuyOrderByMaxPrice(buyer.address, buyer.strike, buyOrder[0]);
             plen = await Orderbook.getNumberOfUserPositions(buyer.address);
             totalSpent = totalSpent.add(buyOrder[0]);
+            console.log("seller remaining position = " + convertFrom64x64(remainingPosition.value));
             for (i2 = 0; i2 < plen; i2++) {
                 position = await Orderbook.getPosition(buyer.address, i2);
+                console.log("long position amount = " + convertFrom64x64(position[1]));
                 totalBought += parseFloat(convertFrom64x64(position[1]));
             }
             ct++;
