@@ -58,11 +58,11 @@ function makeSellStruct(addr) {
     };
 }
 
-function makeBuyStruct(addr, maxStrike, maxAmount) {
+function makeBuyStruct(addr, maxStrike) {
     return {
         'address': addr,
         'strike': getRandomInt(maxStrike),
-        'maxAmount': maxAmount
+        'maxAmount': convertTo64x64(getRandomFloat(100000))
     };
 }
 
@@ -105,7 +105,7 @@ describe("Opening Orders", function () {
 
 describe("Filling Orders", function () {
     it("Add Sell Orders, fill some and check bought amount is equal to sold amount", async function () {
-        let buyOrder, filledOrder, sellers, position, addresses;
+        let buyOrder, filledOrder, sellers, position, addresses, sellOrder;
         let i, i2, ct, maxStrike, totalBought, totalSold, plen;
         let totalPaid, totalSpent, gwei, remainingPosition;
         addresses = [addr1, addr2, addr3, addr4, addr5, addr6];
@@ -124,21 +124,27 @@ describe("Filling Orders", function () {
                 maxStrike = sellers[i].strike;
             }
             await Orderbook.sellOrder(sellers[i].address, sellers[i].strike, sellers[i].askPrice, sellers[i].sellAmount);
+            position = await Orderbook.getPosition(addresses[i].address, 0);
+            console.log("Seller " + addresses[i].address + " strike = " + position[0] + ", longUnits " + convertFrom64x64(position[1]));
         }
 
         for (i = Math.floor(addresses.length / 2); i < addresses.length; i++) {
-            buyer = makeBuyStruct(addresses[i].address, maxStrike, sellers[ct].sellAmount);
+            buyer = makeBuyStruct(addresses[i].address, maxStrike);
             buyOrder = await Orderbook.getBuyOrderByUnitAmount(buyer.strike, buyer.maxAmount);
             remainingPosition = await Orderbook.fillBuyOrderByMaxPrice(buyer.address, buyer.strike, buyOrder[0]);
             plen = await Orderbook.getNumberOfUserPositions(buyer.address);
             totalSpent = totalSpent.add(buyOrder[0]);
-            console.log("seller remaining position = " + convertFrom64x64(remainingPosition.value));
             for (i2 = 0; i2 < plen; i2++) {
                 position = await Orderbook.getPosition(buyer.address, i2);
-                console.log("long position amount = " + convertFrom64x64(position[1]));
+                console.log("Buyer " + buyer.address + " strike = " + position[0] + ", longUnits " + convertFrom64x64(position[1]));
                 totalBought += parseFloat(convertFrom64x64(position[1]));
             }
             ct++;
+        }
+
+        for(i = 0; i < Math.floor(addresses.length / 2); i++) {
+            sellOrder = await Orderbook.getOrder(i);
+            console.log("Order status: " + sellOrder[2]);
         }
 
         for (i = 0; i < Math.floor(addresses.length / 2); i++) {

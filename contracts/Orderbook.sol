@@ -34,6 +34,8 @@ contract Orderbook is Ownable {
 
     uint64 constant PAGESIZE = 1000;
 
+    int128 constant RESOLUTION = 0x68db8bac710cb; //equal to 0.0001 in ABDKMATH64x64
+
     constructor(
         uint256 startTimestamp,
         uint256 endTimestamp,
@@ -70,12 +72,13 @@ contract Orderbook is Ownable {
         returns (
             uint256,
             uint256,
+            bool,
             address
         )
     {
         require(index < openOrders.length);
         Order memory currOrder = openOrders[index];
-        return (currOrder.askPrice, currOrder.posIdx, currOrder.seller);
+        return (currOrder.askPrice, currOrder.posIdx, currOrder.unfilled, currOrder.seller);
     }
 
     /*
@@ -241,7 +244,8 @@ contract Orderbook is Ownable {
         int128 adjustedAmount;
         int128 unitsToFill;
         uint256 buyerPositionIndex;
-        uint256 remainingPosition = maxPrice;
+        uint256 remainingPremium = maxPrice;
+        uint256 initNumOfPositions = getNumberOfUserPositions(buyer);
 
         for (i = 0; i < openOrders.length; i++) {
             currAskPrice = openOrders[i].askPrice; //Get ask price from order.
@@ -252,16 +256,18 @@ contract Orderbook is Ownable {
             currLongPositionAmount = userPositions[openOrders[i].seller]
                 .positions[openOrders[i].posIdx]
                 .longPositionAmount; //Get long position amount available from order.
-            if (remainingPosition == 0) {
+            if (remainingPremium == 0) {
                 //If we have filled already desired units from buyer, exit loop.
                 break;
             } else if (openOrders[i].unfilled && currStrike >= minStrike) {
                 //Check the order is still open and we are at desired minimum strike.
                 unitsToFill = ABDKMath64x64.divu(
-                    remainingPosition,
+                    remainingPremium,
                     currAskPrice
                 );
-                if (unitsToFill >= currLongPositionAmount) {
+                if (unitsToFill <= RESOLUTION) {
+                    break;
+                } else if (unitsToFill >= ABDKMath64x64.sub(currLongPositionAmount, RESOLUTION)) {
                     adjustedAmount = currLongPositionAmount;
                     openOrders[i].unfilled = false; //Signal order has been filled.
                 } else {
@@ -294,18 +300,18 @@ contract Orderbook is Ownable {
                     0,
                     buyerPositionIndex
                 ); //Add the long units to buyer position.
-                remainingPosition = remainingPosition.sub(
+                remainingPremium = remainingPremium.sub(
                     ABDKMath64x64.mulu(adjustedAmount, currAskPrice)
                 );
             }
         }
 
-        if (maxPrice != remainingPosition && getNumberOfUserPositions(buyer) == 0) {
+        if (maxPrice != remainingPremium && initNumOfPositions == 0) {
             //Maintain addresses that hold positions
             userAddresses.push(buyer);
         }
 
-        return remainingPosition;
+        return remainingPremium;
     }
 
     /*
