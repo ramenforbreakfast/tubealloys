@@ -19,17 +19,35 @@ contract Controller is Ownable, ReentrancyGuard {
     //FundsPoolInterface public pool;
 
     uint64 constant PAGESIZE = 1000;
-
-    // The idea is that we keep track of deployed orderbook contracts by mapping them to a unique
-    // identifying string i.e. ETH-121-20210101-20210201
+    PoolInterface private pool;
     mapping(string => address) internal deployedBooks;
+
+    constructor(address poolAddress) {
+        pool = PoolInterface(poolAddress);
+    }
+
+    modifier onlyForSender(address sender) {
+        require(
+            msg.sender == sender,
+            "Controller: Cannot perform operation for another user!"
+        );
+        _;
+    }
 
     modifier onlyOnDeployedBooks(string memory bookID) {
         require(
             deployedBooks[bookID] != address(0),
-            "Controller: Cannot settle an undeployed orderbook!"
+            "Controller: Cannot perform operation on undeployed orderbook!"
         );
         _;
+    }
+
+    /**
+     * @notice Changes pool contract in use by the controller
+     * @param poolAddress pool contract to be used by controller
+     */
+    function setNewPool(address poolAddress) external onlyOwner nonReentrant {
+        pool = PoolInterface(poolAddress);
     }
 
     /**
@@ -37,8 +55,9 @@ contract Controller is Ownable, ReentrancyGuard {
      * @param bookID string for identifying orderbook i.e. ETH-121-20210101-20210201
      * @param newBookAddress address of book to add
      */
-    function createNewSwapBook(string memory bookID, address newBookAddress)
+    function addNewSwapBook(string memory bookID, address newBookAddress)
         external
+        onlyOwner
         nonReentrant
     {
         deployedBooks[bookID] = newBookAddress;
@@ -53,9 +72,6 @@ contract Controller is Ownable, ReentrancyGuard {
         nonReentrant
         onlyOnDeployedBooks(bookID)
     {
-        OrderbookInterface bookToSettle =
-            OrderbookInterface(deployedBooks[bookID]);
-
         uint256 i;
         uint256 j;
         address currAddress;
@@ -65,12 +81,20 @@ contract Controller is Ownable, ReentrancyGuard {
         int128 currShort;
         uint256 settlementAmount;
 
+        OrderbookInterface bookToSettle =
+            OrderbookInterface(deployedBooks[bookID]);
+
+        require(
+            bookToSettle.isSettled() == false,
+            "Controller: Cannot settle swaps for an already settled orderbook!"
+        );
         (uint256 roundStart, uint256 roundEnd, address bookOracle, ) =
             bookToSettle.getOrderbookInfo();
         require(
             roundEnd <= block.timestamp,
             "Controller: Cannot settle swaps before round has ended!"
         );
+
         OracleInterface oracle = OracleInterface(bookOracle);
         uint256 realizedVar = oracle.getRealized(roundStart, roundEnd);
 
@@ -96,7 +120,6 @@ contract Controller is Ownable, ReentrancyGuard {
             }
             bookToSettle.setUserSettlement(currAddress, settlementAmount);
         }
-        // Possibly we should store a settled value? Would be useful to keep track of whether an orderbook has been settled
         bookToSettle.settleOrderbook();
     }
 
@@ -156,35 +179,7 @@ contract Controller is Ownable, ReentrancyGuard {
     }
 
     /**
-     * @notice Wrapper function to call orderbook getPosition function, returns user's position at selected index
-     * @param bookID identifier of orderbook being queried
-     * @param userAddress address of the user position belongs to
-     * @param positionIndex index of user position
-     * @return uint256 user strike, int128 64.64 user long position, int 128 64.64 user short position
-     */
-    function getUserPosition(
-        string memory bookID,
-        address userAddress,
-        uint256 positionIndex
-    )
-        external
-        view
-        onlyOnDeployedBooks(bookID)
-        returns (
-            uint256,
-            int128,
-            int128
-        )
-    {
-        OrderbookInterface currentBook =
-            OrderbookInterface(deployedBooks[bookID]);
-        (uint256 userStrike, int128 userLong, int128 userShort) =
-            currentBook.getPosition(userAddress, positionIndex);
-        return (userStrike, userLong, userShort);
-    }
-
-    /**
-     * @notice Take in user's desired position parameters and matches them with open sell orders, returns a price quote for user's position.
+     * @notice Take in user's funds optimistically and tries to fulfill the order size at the specified strike, returns remaining funds if order could not be filled completely
      * @param bookID identifier of orderbook to purchase from
      * @param buyer address of user purchasing the swap
      * @param varianceStrike variance strike of swap
@@ -196,7 +191,13 @@ contract Controller is Ownable, ReentrancyGuard {
         address buyer,
         uint256 varianceStrike,
         uint256 payment
-    ) external nonReentrant onlyOnDeployedBooks(bookID) returns (uint256) {
+    )
+        external
+        nonReentrant
+        onlyForSender(buyer)
+        onlyOnDeployedBooks(bookID)
+        returns (uint256)
+    {
         OrderbookInterface currentBook =
             OrderbookInterface(deployedBooks[bookID]);
 
@@ -206,8 +207,16 @@ contract Controller is Ownable, ReentrancyGuard {
             "Controller: Cannot purchase swaps for a round that has ended!"
         );
 
+        require(
+            pool.getUserBalance(buyer) >= payment,
+            "Controller: User has insufficient funds to purchase swaps!"
+        );
+
+        pool.transfer(buyer, deployedBooks[bookID], payment);
         uint256 remainder =
             currentBook.fillBuyOrderByMaxPrice(buyer, varianceStrike, payment);
+        pool.transfer(deployedBooks[bookID], buyer, remainder);
+
         return remainder;
     }
 
@@ -225,7 +234,7 @@ contract Controller is Ownable, ReentrancyGuard {
         uint256 varianceStrike,
         uint256 askPrice,
         int128 positionSize
-    ) external nonReentrant onlyOnDeployedBooks(bookID) {
+    ) external nonReentrant onlyForSender(minter) onlyOnDeployedBooks(bookID) {
         OrderbookInterface currentBook =
             OrderbookInterface(deployedBooks[bookID]);
 
@@ -238,9 +247,13 @@ contract Controller is Ownable, ReentrancyGuard {
         // ABDK functions revolve around uint128 integers, first 64 bits are the integer, second 64 bits are the decimals
         // collateralSize is collateral in wei (positionSize * 1e17 wei (0.1 ETH))
         uint256 collateral = ABDKMath64x64.mulu(positionSize, 1e17);
+        require(
+            pool.getUserBalance(minter) >= collateral,
+            "Controller: User has insufficient funds to collateralize swaps!"
+        );
 
+        pool.transfer(minter, deployedBooks[bookID], collateral);
         currentBook.sellOrder(minter, varianceStrike, askPrice, positionSize);
-        //pool.transferToPool(minter, collateral);
     }
 
     /**
@@ -251,28 +264,30 @@ contract Controller is Ownable, ReentrancyGuard {
     function redeemSwapPositions(string memory bookID, address redeemer)
         external
         nonReentrant
+        onlyForSender(redeemer)
         onlyOnDeployedBooks(bookID)
     {
         OrderbookInterface currentBook =
             OrderbookInterface(deployedBooks[bookID]);
         require(
             currentBook.isSettled() == true,
-            "Controller: Cannot redeem swap, round has not been settled!"
+            "Controller: Cannot redeem swap before round has been settled!"
         );
 
         uint256 settlement = currentBook.redeemUserSettlement(redeemer);
-        //pool.transferToUser(redeemer, settlement);
+        pool.transfer(deployedBooks[bookID], redeemer, settlement);
     }
 
     /**
      * @notice Get information about a deployed orderbook from its index
      * @param bookID orderbook identifier
      * @return address of the orderbook
-     * @return address of the orderbook's oracle
      * @return orderbook roundStart timestamp
      * @return orderbook roundEnd timestamp
+     * @return address of the orderbook's oracle
+     * @return starting implied variance of round
      */
-    function getBookInfoByIndex(string memory bookID)
+    function getBookInfoByName(string memory bookID)
         external
         view
         onlyOnDeployedBooks(bookID)

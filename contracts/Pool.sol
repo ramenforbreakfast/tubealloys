@@ -21,7 +21,10 @@ contract Pool is Ownable {
     }
 
     function withdraw(uint256 amount) external {
-        require(_balances[msg.sender] >= amount);
+        require(
+            _balances[msg.sender] >= amount,
+            "Pool: insufficient funds for withdrawal!"
+        );
 
         _balances[msg.sender] = _balances[msg.sender].sub(amount);
 
@@ -33,7 +36,10 @@ contract Pool is Ownable {
         address to,
         uint256 amount
     ) external onlyOwner {
-        require(_balances[from] >= amount);
+        require(
+            _balances[from] >= amount,
+            "Pool: insufficient funds for transfer!"
+        );
         _balances[from] = _balances[from].sub(amount);
         _balances[to] = _balances[to].add(amount);
     }

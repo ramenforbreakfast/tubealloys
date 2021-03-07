@@ -28,6 +28,7 @@
     "hardhat-gas-reporter": "^1.0.4"
   },
   "dependencies": {
-    "@openzeppelin/contracts": "^3.4.0"
+    "@openzeppelin/contracts": "^3.4.0",
+    "date-fns": "^2.17.0"
   }
 }

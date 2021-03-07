@@ -99,7 +99,7 @@ contract Orderbook is Ownable {
      * Get the number of positions a specific address holds.
      */
     function getNumberOfUserPositions(address addr)
-        external
+        public
         view
         returns (uint256)
     {
@@ -226,13 +226,14 @@ contract Orderbook is Ownable {
         require(positionSize != 0);
         require(strike != 0);
         uint256 index;
+        uint256 initNumOfPositions = getNumberOfUserPositions(seller);
 
-        //Find if the seller already has a position at this strike. Otherwise, get the index for a new position to be created.
+        // Find if the seller already has a position at this strike. Otherwise, get the index for a new position to be created.
         index = VariancePosition._findPositionIndex(
             userPositions[seller],
             strike
         );
-        //Create or add to an existing position for the seller.
+        // Create or add to an existing position for the seller.
         VariancePosition._addToPosition(
             userPositions[seller],
             strike,
@@ -241,10 +242,12 @@ contract Orderbook is Ownable {
             0,
             index
         );
-        //Add this new sell order to the orderbook.
+        // Add this new sell order to the orderbook.
         _addToOrderbook(seller, strike, askPrice, index);
-        //Maintain addresses that hold positions
-        userAddresses.push(seller);
+        // Maintain addresses that hold positions
+        if (initNumOfPositions == 0) {
+            userAddresses.push(seller);
+        }
     }
 
     /*
@@ -265,21 +268,25 @@ contract Orderbook is Ownable {
         int128 unitsFilled;
         uint256 buyerPositionIndex;
         uint256 remainingPosition = maxPrice;
+        uint256 initNumOfPositions = getNumberOfUserPositions(buyer);
 
         for (i = 0; i < openOrders.length; i++) {
-            currAskPrice = openOrders[i].askPrice; //Get ask price from order.
+            // Get ask price from order.
+            currAskPrice = openOrders[i].askPrice;
+            // Get strike from order.
             currStrike = userPositions[openOrders[i].seller].positions[
                 openOrders[i].posIdx
             ]
-                .strike; //Get strike from order.
+                .strike;
+            // Get long position amount available from order.
             currLongPositionAmount = userPositions[openOrders[i].seller]
                 .positions[openOrders[i].posIdx]
-                .longPositionAmount; //Get long position amount available from order.
+                .longPositionAmount;
             if (remainingPosition == 0) {
-                //If we have filled already desired units from buyer, exit loop.
+                // If we have filled already desired units from buyer, exit loop.
                 break;
             } else if (openOrders[i].unfilled && currStrike >= minStrike) {
-                //Check the order is still open and we are at desired minimum strike.
+                // Check the order is still open and we are at desired minimum strike.
                 unitsFilled = ABDKMath64x64.divu(
                     remainingPosition,
                     currAskPrice
@@ -290,13 +297,15 @@ contract Orderbook is Ownable {
                 } else {
                     adjustedAmount = unitsFilled;
                 }
+                // Remove the long position amount that has been filled from seller.
                 VariancePosition._removeFromPosition(
                     userPositions[openOrders[i].seller],
                     adjustedAmount,
                     0,
                     0,
                     openOrders[i].posIdx
-                ); //Remove the long position amount that has been filled from seller.
+                );
+                // Add payout seller gets from buyer for filling this order.
                 VariancePosition._addToPosition(
                     userPositions[openOrders[i].seller],
                     currStrike,
@@ -304,11 +313,13 @@ contract Orderbook is Ownable {
                     0,
                     ABDKMath64x64.mulu(adjustedAmount, currAskPrice),
                     openOrders[i].posIdx
-                ); //Add payout seller gets from buyer for filling this order.
+                );
+                // Find if buyer has an open position to add long position to.
                 buyerPositionIndex = VariancePosition._findPositionIndex(
                     userPositions[buyer],
                     currStrike
-                ); //Find if buyer has an open position to add long position to.
+                );
+                // Add the long units to buyer position.
                 VariancePosition._addToPosition(
                     userPositions[buyer],
                     currStrike,
@@ -316,15 +327,14 @@ contract Orderbook is Ownable {
                     0,
                     0,
                     buyerPositionIndex
-                ); //Add the long units to buyer position.
+                );
                 remainingPosition = remainingPosition.sub(
                     ABDKMath64x64.mulu(adjustedAmount, currAskPrice)
                 );
             }
         }
-
-        if (maxPrice != remainingPosition) {
-            //Maintain addresses that hold positions
+        if (maxPrice != remainingPosition && initNumOfPositions == 0) {
+            // Maintain addresses that hold positions
             userAddresses.push(buyer);
         }
 
@@ -357,20 +367,22 @@ contract Orderbook is Ownable {
         uint256 ct = 0;
 
         for (i = 0; i < openOrders.length && ct < PAGESIZE; i++) {
+            // Get strike from order.
             currStrike = userPositions[openOrders[i].seller].positions[
                 openOrders[i].posIdx
             ]
-                .strike; //Get strike from order.
+                .strike;
+            // Get long position amount available from order.
             currLongPositionAmount = userPositions[openOrders[i].seller]
                 .positions[openOrders[i].posIdx]
-                .longPositionAmount; //Get long position amount available from order.
+                .longPositionAmount;
             if (unitAmount == 0) {
-                //If we have filled already desired units from buyer, exit loop.
+                // If we have filled already desired units from buyer, exit loop.
                 break;
             } else if (openOrders[i].unfilled && currStrike >= minStrike) {
-                //Check the order is still open and we are at desired minimum strike.
+                // Check the order is still open and we are at desired minimum strike.
                 if (unitAmount >= currLongPositionAmount) {
-                    //Check how much the current order can fill based on what is left from buyer units.
+                    // Check how much the current order can fill based on what is left from buyer units.
                     adjustedAmount = currLongPositionAmount;
                 } else {
                     adjustedAmount = unitAmount;
@@ -378,12 +390,13 @@ contract Orderbook is Ownable {
                 totalPrice = totalPrice.add(
                     ABDKMath64x64.mulu(adjustedAmount, openOrders[i].askPrice)
                 );
-                unitAmount = ABDKMath64x64.sub(unitAmount, adjustedAmount); //Update the remaining buyer units after the transaction performed.
-                unitsToBuy[ct] = adjustedAmount; //Maintain the long units and strikes that can be filled
+                // Update the remaining buyer units after the transaction performed.
+                unitAmount = ABDKMath64x64.sub(unitAmount, adjustedAmount);
+                // Maintain the long units and strikes that can be filled
+                unitsToBuy[ct] = adjustedAmount;
                 strikesToBuy[ct++] = currStrike;
             }
         }
-
         return (totalPrice, unitAmount, unitsToBuy, strikesToBuy);
     }
 
@@ -405,32 +418,34 @@ contract Orderbook is Ownable {
         uint256 orderSize = openOrders.length;
 
         if (orderSize == 0) {
-            openOrders.push(Order(askPrice, posIdx, owner, true)); //If this is first order, just push it into the struct.
+            openOrders.push(Order(askPrice, posIdx, owner, true)); // If this is first order, just push it into the struct.
             return;
         }
 
         for (i = 0; i < orderSize; i++) {
-            currAddr = openOrders[i].seller; //Get seller from order.
-            currId = openOrders[i].posIdx; //Get position index from order.
-            currAskPrice = openOrders[i].askPrice; //Get ask price from order.
-            currUnfilled = openOrders[i].unfilled; //Get filled status from order
-            currStrike = userPositions[currAddr].positions[currId].strike; //Get strike from order.
+            currAddr = openOrders[i].seller; // Get seller from order.
+            currId = openOrders[i].posIdx; // Get position index from order.
+            currAskPrice = openOrders[i].askPrice; // Get ask price from order.
+            currUnfilled = openOrders[i].unfilled; // Get filled status from order
+            currStrike = userPositions[currAddr].positions[currId].strike; // Get strike from order.
             if (
                 strike == currStrike &&
                 currAddr == owner &&
                 currAskPrice == askPrice &&
                 currUnfilled
             ) {
-                //If the current order matches the new order, we exit out because its same so no need to update.
+                // If the current order matches the new order, we exit out because its same so no need to update.
                 break;
             } else if (
                 strike < currStrike ||
                 (strike == currStrike && askPrice < currAskPrice)
             ) {
-                _addNewOrder(owner, askPrice, posIdx, i); //Add new order into array in the first index where it has either lower strike or same strike but lower ask price.
+                // Add new order into array in the first index where it has either lower strike or same strike but lower ask price.
+                _addNewOrder(owner, askPrice, posIdx, i);
                 break;
             } else if (i == orderSize - 1) {
-                openOrders.push(Order(askPrice, posIdx, owner, true)); //If at the last entry in the orders, push this at the end.
+                // If at the last entry in the orders, push this at the end.
+                openOrders.push(Order(askPrice, posIdx, owner, true));
             }
         }
     }
@@ -454,21 +469,26 @@ contract Orderbook is Ownable {
         address prevAddr;
         bool prevUnfilled;
 
-        openOrders.push(Order(0, 0, address(0), false)); //Push one new empty order to the orderbook struct. This will get filled by the order shifted to the right.
-        currId = posIdx; //Order parameters to be added at the starting index.
+        // Push one new empty order to the orderbook struct. This will get filled by the order shifted to the right.
+        openOrders.push(Order(0, 0, address(0), false));
+        // Order parameters to be added at the starting index.
+        currId = posIdx;
         currAddr = addr;
         currAskPrice = askPrice;
         currUnfilled = true;
         for (i = index; i < openOrders.length; i++) {
-            prevAskPrice = openOrders[i].askPrice; //Keep the old order at this index because it will be added to next one.
+            // Keep the old order at this index because it will be added to next one.
+            prevAskPrice = openOrders[i].askPrice;
             prevId = openOrders[i].posIdx;
             prevAddr = openOrders[i].seller;
             prevUnfilled = openOrders[i].unfilled;
-            openOrders[i].askPrice = currAskPrice; //Update the current order to the one before it or the new order being inserted.
+            // Update the current order to the one before it or the new order being inserted.
+            openOrders[i].askPrice = currAskPrice;
             openOrders[i].posIdx = currId;
             openOrders[i].seller = currAddr;
             openOrders[i].unfilled = currUnfilled;
-            currId = prevId; //Store the old order as current because it will replace the next one.
+            // Store the old order as current because it will replace the next one.
+            currId = prevId;
             currAddr = prevAddr;
             currAskPrice = prevAskPrice;
             currUnfilled = prevUnfilled;
