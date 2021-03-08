@@ -178,6 +178,8 @@ contract Controller is Ownable, ReentrancyGuard {
         return (totalPaid, totalUnits);
     }
 
+    event BuyOrder(address buyer, uint256 remainder);
+
     /**
      * @notice Take in user's funds optimistically and tries to fulfill the order size at the specified strike, returns remaining funds if order could not be filled completely
      * @param bookID identifier of orderbook to purchase from
@@ -217,7 +219,7 @@ contract Controller is Ownable, ReentrancyGuard {
             currentBook.fillBuyOrderByMaxPrice(buyer, varianceStrike, payment);
         pool.transfer(deployedBooks[bookID], buyer, remainder);
 
-        return remainder;
+        emit BuyOrder(buyer, remainder);
     }
 
     /**

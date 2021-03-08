@@ -34,6 +34,8 @@ contract Orderbook is Ownable {
 
     uint64 constant PAGESIZE = 1000;
 
+    int128 constant RESOLUTION = 0x68db8bac710cb; //equal to 0.0001 in ABDKMATH64x64
+
     constructor(
         uint256 startTimestamp,
         uint256 endTimestamp,
@@ -87,12 +89,18 @@ contract Orderbook is Ownable {
         returns (
             uint256,
             uint256,
+            bool,
             address
         )
     {
-        require(index < openOrders.length);
+        require(index < openOrders.length, "Orderbook: Invalid order index!");
         Order memory currOrder = openOrders[index];
-        return (currOrder.askPrice, currOrder.posIdx, currOrder.seller);
+        return (
+            currOrder.askPrice,
+            currOrder.posIdx,
+            currOrder.unfilled,
+            currOrder.seller
+        );
     }
 
     /*
@@ -118,7 +126,10 @@ contract Orderbook is Ownable {
             int128
         )
     {
-        require(index < userPositions[owner].positions.length);
+        require(
+            index < userPositions[owner].positions.length,
+            "Orderbook: Invalid user position index!"
+        );
         VariancePosition.Position memory currPosition =
             userPositions[owner].positions[index];
         return (
@@ -157,7 +168,10 @@ contract Orderbook is Ownable {
      * Get address by index.
      */
     function getAddrByIdx(uint256 index) external view returns (address) {
-        require(index < userAddresses.length);
+        require(
+            index < userAddresses.length,
+            "Orderbook: Invalid index for user addresses!"
+        );
         return userAddresses[index];
     }
 
@@ -180,7 +194,6 @@ contract Orderbook is Ownable {
         onlyOwner
         returns (uint256)
     {
-        require(!settled);
         return VariancePosition._settleOrderPayment(userPositions[owner]);
     }
 
@@ -192,7 +205,10 @@ contract Orderbook is Ownable {
         onlyOwner
         returns (uint256)
     {
-        require(!settled);
+        require(
+            settled,
+            "Orderbook: Cannot redeem user settlement if orderbook has not been settled!"
+        );
         return VariancePosition._redeemUserSettlement(userPositions[owner]);
     }
 
@@ -203,7 +219,10 @@ contract Orderbook is Ownable {
         external
         onlyOwner
     {
-        require(!settled);
+        require(
+            !settled,
+            "Orderbook: Cannot modify user settlement on an already settled orderbook!"
+        );
         VariancePosition._setUserSettlement(userPositions[owner], settlement);
     }
 
@@ -220,11 +239,17 @@ contract Orderbook is Ownable {
         uint256 askPrice,
         int128 positionSize
     ) external onlyOwner {
-        require(roundEnd > block.timestamp);
-        require(!settled);
-        require(askPrice != 0);
-        require(positionSize != 0);
-        require(strike != 0);
+        require(
+            roundEnd > block.timestamp,
+            "Orderbook: Cannot submit sell order, round has ended!"
+        );
+        require(
+            !settled,
+            "Orderbook: Cannot submit sell order, orderbook has been settled!"
+        );
+        require(askPrice != 0, "Orderbook: askPrice cannot be zero!");
+        require(positionSize != 0, "Orderbook: positionSize cannot be zero!");
+        require(strike != 0, "Orderbook: strike cannot be zero!");
         uint256 index;
         uint256 initNumOfPositions = getNumberOfUserPositions(seller);
 
@@ -258,16 +283,22 @@ contract Orderbook is Ownable {
         uint256 minStrike,
         uint256 maxPrice
     ) external onlyOwner returns (uint256) {
-        require(roundEnd > block.timestamp);
-        require(!settled);
+        require(
+            roundEnd > block.timestamp,
+            "Orderbook: Cannot submit buy order, round has ended!"
+        );
+        require(
+            !settled,
+            "Orderbook: Cannot submit buy order, orderbook has been settled!"
+        );
         uint256 i;
         uint256 currStrike;
         int128 currLongPositionAmount;
         uint256 currAskPrice;
         int128 adjustedAmount;
-        int128 unitsFilled;
+        int128 unitsToFill;
         uint256 buyerPositionIndex;
-        uint256 remainingPosition = maxPrice;
+        uint256 remainingPremium = maxPrice;
         uint256 initNumOfPositions = getNumberOfUserPositions(buyer);
 
         for (i = 0; i < openOrders.length; i++) {
@@ -282,20 +313,25 @@ contract Orderbook is Ownable {
             currLongPositionAmount = userPositions[openOrders[i].seller]
                 .positions[openOrders[i].posIdx]
                 .longPositionAmount;
-            if (remainingPosition == 0) {
+            if (remainingPremium == 0) {
                 // If we have filled already desired units from buyer, exit loop.
                 break;
             } else if (openOrders[i].unfilled && currStrike >= minStrike) {
                 // Check the order is still open and we are at desired minimum strike.
-                unitsFilled = ABDKMath64x64.divu(
-                    remainingPosition,
+                unitsToFill = ABDKMath64x64.divu(
+                    remainingPremium,
                     currAskPrice
                 );
-                if (unitsFilled >= currLongPositionAmount) {
+                if (unitsToFill <= RESOLUTION) {
+                    break;
+                } else if (
+                    unitsToFill >=
+                    ABDKMath64x64.sub(currLongPositionAmount, RESOLUTION)
+                ) {
                     adjustedAmount = currLongPositionAmount;
                     openOrders[i].unfilled = false; //Signal order has been filled.
                 } else {
-                    adjustedAmount = unitsFilled;
+                    adjustedAmount = unitsToFill;
                 }
                 // Remove the long position amount that has been filled from seller.
                 VariancePosition._removeFromPosition(
@@ -328,17 +364,17 @@ contract Orderbook is Ownable {
                     0,
                     buyerPositionIndex
                 );
-                remainingPosition = remainingPosition.sub(
+                remainingPremium = remainingPremium.sub(
                     ABDKMath64x64.mulu(adjustedAmount, currAskPrice)
                 );
             }
         }
-        if (maxPrice != remainingPosition && initNumOfPositions == 0) {
+        if (maxPrice != remainingPremium && initNumOfPositions == 0) {
             // Maintain addresses that hold positions
             userAddresses.push(buyer);
         }
 
-        return remainingPosition;
+        return remainingPremium;
     }
 
     /*
@@ -355,8 +391,14 @@ contract Orderbook is Ownable {
             uint256[PAGESIZE] memory
         )
     {
-        require(roundEnd > block.timestamp);
-        require(!settled);
+        require(
+            roundEnd > block.timestamp,
+            "Orderbook: Cannot get quote, round has ended!"
+        );
+        require(
+            !settled,
+            "Orderbook: Cannot get quote, orderbook has been settled!"
+        );
         uint256 i;
         uint256 currStrike;
         int128 currLongPositionAmount;

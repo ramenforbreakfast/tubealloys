@@ -31,6 +31,10 @@ module.exports = {
       loggingEnabled: false,
       gasMultiplier: 1
     }
+  },
+  mocha: {
+    // Mocha timeout is for a whole test case, I originally thought this was for asynchronous calls waiting for a promise
+    timeout: 30000
   }
 };
 
