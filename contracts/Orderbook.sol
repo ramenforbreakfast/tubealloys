@@ -226,10 +226,6 @@ contract Orderbook is Ownable {
         VariancePosition._setUserSettlement(userPositions[owner], settlement);
     }
 
-    function setBookRoundEnd(uint256 date) external {
-        roundEnd = date;
-    }
-
     /*
      * Open a sell order for a specific strike and ask price.
      */
@@ -460,7 +456,8 @@ contract Orderbook is Ownable {
         uint256 orderSize = openOrders.length;
 
         if (orderSize == 0) {
-            openOrders.push(Order(askPrice, posIdx, owner, true)); // If this is first order, just push it into the struct.
+            // If this is first order, just push it into the struct.
+            openOrders.push(Order(askPrice, posIdx, owner, true));
             return;
         }
 
