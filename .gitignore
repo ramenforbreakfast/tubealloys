@@ -1,5 +1,7 @@
 node_modules
 .idea
+.openzeppelin
+gitkeys.sh
 
 #Hardhat files
 cache
