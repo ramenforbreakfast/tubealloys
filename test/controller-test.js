@@ -1,5 +1,5 @@
 const { expect } = require("chai");
-const { ethers } = require("hardhat");
+const { ethers, upgrades } = require("hardhat");
 const BigNumber = require("bignumber.js");
 //const OrderBook = artifacts.require("../contracts/Orderbook")
 
@@ -66,12 +66,12 @@ describe("Test Controller Contract", function () {
     roundEnd = Math.round((Date.now() + 45000) / 1000);
 
     const poolContract = await ethers.getContractFactory("Pool");
-    Pool = await poolContract.deploy();
+    Pool = await upgrades.deployProxy(poolContract);
     await Pool.deployed();
     console.log("Pool Address: ", Pool.address);
 
     const controllerContract = await ethers.getContractFactory("Controller");
-    Controller = await controllerContract.deploy(Pool.address);
+    Controller = await upgrades.deployProxy(controllerContract, [Pool.address]);
     await Controller.deployed();
     console.log("Controller Address: ", Controller.address);
     await Pool.transferOwnership(Controller.address);
@@ -85,7 +85,7 @@ describe("Test Controller Contract", function () {
     let initBookIV = await Oracle.getLatestImpliedVariance();
     newBookID = "ETH-" + initBookIV + "-" + roundStart + "-" + roundEnd;
     console.log("New Book Name: ", newBookID);
-    Orderbook = await orderBookContract.deploy(roundStart, roundEnd, Oracle.address, initBookIV);
+    Orderbook = await upgrades.deployProxy(orderBookContract, [roundStart, roundEnd, Oracle.address, initBookIV]);
     await Orderbook.deployed();
     await Orderbook.transferOwnership(Controller.address);
 
