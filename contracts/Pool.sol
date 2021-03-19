@@ -1,12 +1,17 @@
 pragma solidity ^0.7.3;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/math/SafeMath.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/math/SafeMathUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/Initializable.sol";
 
-contract Pool is Ownable {
-    using SafeMath for uint256;
+contract Pool is Initializable, OwnableUpgradeable {
+    using SafeMathUpgradeable for uint256;
 
     mapping(address => uint256) private _balances;
+
+    function initialize() public initializer {
+        OwnableUpgradeable.__Ownable_init();
+    }
 
     function getContractBalance() external view returns (uint256) {
         return address(this).balance;

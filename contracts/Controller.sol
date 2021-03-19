@@ -1,8 +1,9 @@
 pragma solidity ^0.7.3;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/math/SafeMath.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/math/SafeMathUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/Initializable.sol";
 import "../libs/abdk-libraries-solidity/ABDKMath64x64.sol";
 import {Settlement} from "./Settlement.sol";
 import {VariancePosition} from "./VariancePosition.sol";
@@ -10,19 +11,19 @@ import {PoolInterface} from "../interfaces/PoolInterface.sol";
 import {OracleInterface} from "../interfaces/OracleInterface.sol";
 import {OrderbookInterface} from "../interfaces/OrderbookInterface.sol";
 
-contract Controller is Ownable, ReentrancyGuard {
-    /* WORK IN PROGRESS 
-       MANY FUNCTIONS/INTERFACES ARE BASICALLY PSEUDO CODE SINCE OTHER COMPONENTS DO NOT EXIST YET
-     */
-    using SafeMath for uint256;
-
-    //FundsPoolInterface public pool;
+contract Controller is
+    Initializable,
+    OwnableUpgradeable,
+    ReentrancyGuardUpgradeable
+{
+    using SafeMathUpgradeable for uint256;
 
     uint64 constant PAGESIZE = 1000;
     PoolInterface private pool;
     mapping(string => address) internal deployedBooks;
 
-    constructor(address poolAddress) {
+    function initialize(address poolAddress) public initializer {
+        OwnableUpgradeable.__Ownable_init();
         pool = PoolInterface(poolAddress);
     }
 
@@ -72,15 +73,6 @@ contract Controller is Ownable, ReentrancyGuard {
         nonReentrant
         onlyOnDeployedBooks(bookID)
     {
-        uint256 i;
-        uint256 j;
-        address currAddress;
-        uint256 currAddressLength;
-        uint256 currStrike;
-        int128 currLong;
-        int128 currShort;
-        uint256 settlementAmount;
-
         OrderbookInterface bookToSettle =
             OrderbookInterface(deployedBooks[bookID]);
 
@@ -97,30 +89,7 @@ contract Controller is Ownable, ReentrancyGuard {
 
         OracleInterface oracle = OracleInterface(bookOracle);
         uint256 realizedVar = oracle.getRealized(roundStart, roundEnd);
-
-        for (i = 0; i < bookToSettle.getNumberOfActiveAddresses(); i++) {
-            settlementAmount = 0;
-            currAddress = bookToSettle.getAddrByIdx(i);
-            currAddressLength = bookToSettle.getNumberOfUserPositions(
-                currAddress
-            );
-            for (j = 0; j < currAddressLength; j++) {
-                (currStrike, currLong, currShort) = bookToSettle.getPosition(
-                    currAddress,
-                    j
-                );
-                settlementAmount = settlementAmount.add(
-                    Settlement.calcPositionSettlement(
-                        realizedVar,
-                        currStrike,
-                        currLong,
-                        currShort
-                    )
-                );
-            }
-            bookToSettle.setUserSettlement(currAddress, settlementAmount);
-        }
-        bookToSettle.settleOrderbook();
+        bookToSettle.settleOrderbook(realizedVar);
     }
 
     /**

@@ -1,13 +1,13 @@
 pragma solidity ^0.7.3;
 
-import "@openzeppelin/contracts/math/SafeMath.sol";
+import "@openzeppelin/contracts-upgradeable/math/SafeMathUpgradeable.sol";
 import "../libs/abdk-libraries-solidity/ABDKMath64x64.sol";
 
 /*
  * A library for maintaining the variance positions of sellers and buyers.
  */
 library VariancePosition {
-    using SafeMath for uint256;
+    using SafeMathUpgradeable for uint256;
 
     //Individual position struct
     struct Position {

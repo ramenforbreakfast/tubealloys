@@ -56,17 +56,13 @@ interface OrderbookInterface {
 
     function getAddrByIdx(uint256 index) external view returns (address);
 
-    function isSettled() external view returns (bool);
-
-    function settleOrderbook() external;
-
     function redeemFilledOrderPayment(address owner) external returns (uint256);
 
     function redeemUserSettlement(address owner) external returns (uint256);
 
-    function setUserSettlement(address owner, uint256 settlement) external;
+    function isSettled() external view returns (bool);
 
-    function setBookRoundEnd(uint256 date) external;
+    function setUserSettlement(address owner, uint256 settlement) external;
 
     function sellOrder(
         address seller,
@@ -90,4 +86,6 @@ interface OrderbookInterface {
             int128[1000] memory,
             uint256[1000] memory
         );
+
+    function settleOrderbook(uint256 realizedVar) external;
 }

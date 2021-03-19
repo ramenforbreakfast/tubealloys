@@ -1,6 +1,7 @@
 pragma solidity ^0.7.3;
 
 contract Oracle {
+    // Fake oracle contract for development purposes
     function getRealized(uint256 roundStart, uint256 roundEnd)
         external
         view

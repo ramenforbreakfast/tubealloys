@@ -1,12 +1,14 @@
 pragma solidity ^0.7.3;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/math/SafeMath.sol";
-import {VariancePosition} from "./VariancePosition.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/math/SafeMathUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/Initializable.sol";
 import "../libs/abdk-libraries-solidity/ABDKMath64x64.sol";
+import {VariancePosition} from "./VariancePosition.sol";
+import {Settlement} from "./Settlement.sol";
 
-contract Orderbook is Ownable {
-    using SafeMath for uint256;
+contract Orderbook is Initializable, OwnableUpgradeable {
+    using SafeMathUpgradeable for uint256;
 
     //Struct that holds information necessary to check for an open order.
     struct Order {
@@ -36,12 +38,13 @@ contract Orderbook is Ownable {
 
     int128 constant RESOLUTION = 0x68db8bac710cb; //equal to 0.0001 in ABDKMATH64x64
 
-    constructor(
+    function initialize(
         uint256 startTimestamp,
         uint256 endTimestamp,
         address oracle,
         uint256 impliedVariance
-    ) {
+    ) public initializer {
+        OwnableUpgradeable.__Ownable_init();
         roundStart = startTimestamp;
         roundEnd = endTimestamp;
         bookOracle = oracle;
@@ -59,7 +62,6 @@ contract Orderbook is Ownable {
     /*
      * Return intialized values of orderbook
      */
-
     function getOrderbookInfo()
         external
         view
@@ -84,7 +86,7 @@ contract Orderbook is Ownable {
      * Get the ask price, position id and seller address from an order.
      */
     function getOrder(uint256 index)
-        external
+        public
         view
         returns (
             uint256,
@@ -107,7 +109,7 @@ contract Orderbook is Ownable {
      * Get the number of positions a specific address holds.
      */
     function getNumberOfUserPositions(address addr)
-        public
+        external
         view
         returns (uint256)
     {
@@ -118,7 +120,7 @@ contract Orderbook is Ownable {
      * Get the position given an address and position index.
      */
     function getPosition(address owner, uint256 index)
-        external
+        public
         view
         returns (
             uint256,
@@ -175,17 +177,6 @@ contract Orderbook is Ownable {
         return userAddresses[index];
     }
 
-    function isSettled() external view returns (bool) {
-        return settled;
-    }
-
-    /*
-     * Set orderbook internal variable to settled to signify the positions of all users have been calculated.
-     */
-    function settleOrderbook() external onlyOwner {
-        settled = true;
-    }
-
     /*
      * Get the payout from filled orders for a seller. Set this value internally to 0 to signify the seller has received this payment.
      */
@@ -212,13 +203,14 @@ contract Orderbook is Ownable {
         return VariancePosition._redeemUserSettlement(userPositions[owner]);
     }
 
+    function isSettled() external view returns (bool) {
+        return settled;
+    }
+
     /*
      * Set the total payout for variance swaps. This is done from Controller smart contract.
      */
-    function setUserSettlement(address owner, uint256 settlement)
-        external
-        onlyOwner
-    {
+    function setUserSettlement(address owner, uint256 settlement) internal {
         require(
             !settled,
             "Orderbook: Cannot modify user settlement on an already settled orderbook!"
@@ -247,7 +239,7 @@ contract Orderbook is Ownable {
         require(positionSize != 0, "Orderbook: positionSize cannot be zero!");
         require(strike != 0, "Orderbook: strike cannot be zero!");
         uint256 index;
-        uint256 initNumOfPositions = getNumberOfUserPositions(seller);
+        uint256 initNumOfPositions = userPositions[seller].positions.length;
 
         // Find if the seller already has a position at this strike. Otherwise, get the index for a new position to be created.
         index = VariancePosition._findPositionIndex(
@@ -295,7 +287,7 @@ contract Orderbook is Ownable {
         int128 unitsToFill;
         uint256 buyerPositionIndex;
         uint256 remainingPremium = maxPrice;
-        uint256 initNumOfPositions = getNumberOfUserPositions(buyer);
+        uint256 initNumOfPositions = userPositions[buyer].positions.length;
 
         for (i = 0; i < openOrders.length; i++) {
             // Get ask price from order.
@@ -532,5 +524,35 @@ contract Orderbook is Ownable {
             currAskPrice = prevAskPrice;
             currUnfilled = prevUnfilled;
         }
+    }
+
+    function settleOrderbook(uint256 realizedVar) external onlyOwner {
+        uint256 i;
+        uint256 j;
+        address currAddress;
+        uint256 currAddressLength;
+        uint256 currStrike;
+        int128 currLong;
+        int128 currShort;
+        uint256 settlementAmount;
+        for (i = 0; i < userAddresses.length; i++) {
+            settlementAmount = 0;
+            currAddress = userAddresses[i];
+            currAddressLength = userPositions[currAddress].positions.length;
+
+            for (j = 0; j < currAddressLength; j++) {
+                (currStrike, currLong, currShort) = getPosition(currAddress, j);
+                settlementAmount = settlementAmount.add(
+                    Settlement.calcPositionSettlement(
+                        realizedVar,
+                        currStrike,
+                        currLong,
+                        currShort
+                    )
+                );
+            }
+            setUserSettlement(currAddress, settlementAmount);
+        }
+        settled = true;
     }
 }

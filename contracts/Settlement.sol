@@ -1,13 +1,10 @@
 pragma solidity ^0.7.3;
 
-import "@openzeppelin/contracts/math/SafeMath.sol";
+import "@openzeppelin/contracts-upgradeable/math/SafeMathUpgradeable.sol";
 import "../libs/abdk-libraries-solidity/ABDKMath64x64.sol";
 
 library Settlement {
-    /** WORK IN PROGRESS 
-        MANY FUNCTIONS/INTERFACES ARE BASICALLY PSEUDO CODE SINCE OTHER COMPONENTS DO NOT EXIST YET
-     */
-    using SafeMath for uint256;
+    using SafeMathUpgradeable for uint256;
     uint256 constant varianceUnit = 1e17;
 
     /**
