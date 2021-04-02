@@ -56,6 +56,7 @@ describe("Test Controller Contract", function () {
     let i;
     let userAddresses = await ethers.getSigners();
     [owner, addr1, addr2, addr3, addr4] = userAddresses;
+    console.log("Showing First 5 Addresses...")
     for (i = 0; i < userAddresses.length; i++) {
       console.log("Address: ", userAddresses[i].address);
       console.log("Balance: ", (await userAddresses[i].getBalance()).toString());
@@ -411,5 +412,111 @@ describe("Test Controller Contract", function () {
     expect(await addr3.getBalance()
     ).to.equal(ethers.utils.parseEther("9996.475"));
   });
+
+  it.only("Gas stress test", async function () {
+    let i, k;
+    let userAddresses = await ethers.getSigners();
+    roundStart = Math.round(Date.now() / 1000);
+    // Block 
+    roundEnd = Math.round((Date.now() + 9000000) / 1000);
+
+    const poolContract = await ethers.getContractFactory("Pool");
+    Pool = await upgrades.deployProxy(poolContract);
+    await Pool.deployed();
+    console.log("Pool Address: ", Pool.address);
+
+    const controllerContract = await ethers.getContractFactory("Controller");
+    Controller = await upgrades.deployProxy(controllerContract, [Pool.address]);
+    await Controller.deployed();
+    console.log("Controller Address: ", Controller.address);
+    await Pool.transferOwnership(Controller.address);
+
+    const oracleContract = await ethers.getContractFactory("Oracle");
+    Oracle = await oracleContract.deploy();
+    await Oracle.deployed();
+    console.log("Oracle Address: ", Oracle.address);
+
+    const orderBookContract = await ethers.getContractFactory("Orderbook");
+    let initBookIV = await Oracle.getLatestImpliedVariance();
+    newBookID = "ETH-" + initBookIV + "-" + roundStart + "-" + roundEnd;
+    console.log("New Book Name: ", newBookID);
+    Orderbook = await upgrades.deployProxy(orderBookContract, [roundStart, roundEnd, Oracle.address, initBookIV]);
+    await Orderbook.deployed();
+    await Orderbook.transferOwnership(Controller.address);
+
+    console.log("Orderbook Address: ", Orderbook.address);
+    await Controller.addNewSwapBook(newBookID, Orderbook.address);
+    [newBookAddress, newBookStart, newBookEnd, newOracleAddress, newBookIV] = await Controller.getBookInfoByName(newBookID);
+    console.log("New Orderbook Address: ", newBookAddress);
+    console.log("Round Start: ", newBookStart.toString());
+    console.log("Round End: ", newBookEnd.toString());
+    expect(newBookStart).to.equal(roundStart);
+    expect(newBookEnd).to.equal(roundEnd);
+    expect(newOracleAddress).to.equal(Oracle.address);
+    expect(newBookIV).to.equal(initBookIV);
+
+    console.log("Depositing Pool Funds For 1000 Addresses...")
+    let currAddress, buyTx, buyReceipt, txBlock;
+    for (i = 0; i < userAddresses.length; i++) {
+      currAddress = userAddresses[i];
+      buyTx = await Pool.connect(currAddress).deposit({ value: ethers.utils.parseEther("10") });
+      if ((i % 50) == 0) {
+        try {
+          buyReceipt = await buyTx.wait();
+          txBlock = await ethers.provider.getBlock(buyReceipt.blockNumber)
+          console.log(txBlock.timestamp);
+        } catch (e) {
+          console.log(`Transaction Receipt Not Received!\n${e}`);
+        }
+      }
+      expect(await Pool.getUserBalance(currAddress.address)).to.equal(ethers.utils.parseEther("10"));
+      expect(await currAddress.getBalance()).to.equal(ethers.utils.parseEther("9990"));
+    }
+
+    console.log("Selling Swap Positions For 500 Addresses...")
+    txBlock = await ethers.provider.getBlock(await ethers.provider.getBlockNumber());
+    //console.log("Timestamp BEFORE Selling: ", txBlock.timestamp);
+    let posStrike, posLong, posShort, sellPrice;
+    for (i = 0; i < 250; i++) {
+      currAddress = userAddresses[i];
+      sellPrice = (i + 1) / 100;
+      await Controller.connect(currAddress).sellSwapPosition(newBookID, currAddress.address, 130, ethers.utils.parseEther(sellPrice.toString()), convertTo64x64(10));
+      [posStrike, posLong, posShort] = await Orderbook.connect(currAddress).getPosition(currAddress.address, 0);
+      expect(posStrike).to.equal(130);
+      expect(convertFrom64x64(posLong)).to.equal(convertTo8DPString(10));
+      expect(convertFrom64x64(posShort)).to.equal(convertTo8DPString(10));
+      //console.log("Address: " + currAddress.address + " SOLD " + (sellPrice * 10).toString() + " ETH of 130 strike swaps");
+    }
+    for (i = 250; i < 500; i++) {
+      currAddress = userAddresses[i];
+      sellPrice = (i + 1) / 100;
+      await Controller.connect(currAddress).sellSwapPosition(newBookID, currAddress.address, 140, ethers.utils.parseEther(sellPrice.toString()), convertTo64x64(10));
+      [posStrike, posLong, posShort] = await Orderbook.connect(currAddress).getPosition(currAddress.address, 0);
+      expect(posStrike).to.equal(140);
+      expect(convertFrom64x64(posLong)).to.equal(convertTo8DPString(10));
+      expect(convertFrom64x64(posShort)).to.equal(convertTo8DPString(10));
+      //console.log("Address: " + currAddress.address + " SOLD " + (sellPrice * 10).toString() + " ETH of 130 strike swaps");
+    }
+
+    console.log("Buying Swap Positions For 50 Addresses...")
+    let buyPrice;
+    for (i = 0; i < 49; i++) {
+      buyPrice = 0;
+      currAddress = userAddresses[i + 500];
+      for (k = i * 10; k < (i * 10) + 10; k++) {
+        buyPrice += (k + 1) / 10;
+      }
+      buyTx = await Controller.connect(currAddress).buySwapPosition(newBookID, currAddress.address, 130, ethers.utils.parseEther(buyPrice.toString()));
+      try {
+        buyReceipt = await buyTx.wait();
+      } catch (e) {
+        console.log(`Transaction Receipt Not Received!\n${e}`);
+      }
+      expect(buyReceipt.events[0].args.remainder).to.equal(ethers.utils.parseEther("0"));
+      //console.log("Address: " + currAddress.address + " BOUGHT " + buyPrice.toString() + " ETH of 130 strike swaps");
+    }
+
+
+  })
 });
 

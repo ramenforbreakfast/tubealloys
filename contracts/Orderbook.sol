@@ -4,6 +4,8 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/math/SafeMathUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/Initializable.sol";
 import "../libs/abdk-libraries-solidity/ABDKMath64x64.sol";
+import "../libs/BokkyPooBahsRedBlackTreeLibrary/BokkyPooBahsRedBlackTreeLibrary.sol" as RedBlackTree;
+import "../libs/HQ20/LinkedList.sol";
 import {VariancePosition} from "./VariancePosition.sol";
 import {Settlement} from "./Settlement.sol";
 
@@ -12,15 +14,42 @@ contract Orderbook is Initializable, OwnableUpgradeable {
 
     //Struct that holds information necessary to check for an open order.
     struct Order {
-        uint256 askPrice; //Ask price in wei per unit for the order.
-        uint256 posIdx; //Index for the seller's position.
-        address seller; //Address of the seller.
-        bool unfilled; //Has order been filled?
+        uint256 totalAsk; // ask price in wei per unit for the order.
+        int128 totalUnits; // total units for the order
+        uint256 posIdx; // index for the seller's position.
+        address seller; // address of the seller.
+        bool unfilled; // has order been filled?
     }
+
+    // Possible idea:
+    // On the top level is an ordered linked list of strike prices to a binary tree of unit prices, each BT element being a linked list of orders (chronological order consumption so no sorting)
+    // The searching the top level linked list of strike prices could be made reasonable to search if we set a limit to strike price precision, perhaps every 0.5 percent variance.
+    // Binary tree searching of unit prices should be efficient. It is important to note that in this model, the order itself must contain the price (ask/position)
+    // as it is ordered by the cost per unit of exposure.
+    // Linked list of orders is easy because since we already sort by price/unit, we just need to consume starting from the first element in the linked list of orders,
+    // no need to keep order within the list. We add to the back of the list as orders come in @ that price.
 
     mapping(address => VariancePosition.UserPositions) public userPositions; //Positions held by each seller or buyer.
 
-    Order[] public openOrders; //Array of all orders sorted first by strike and then ask price.
+    // Red Black Tree containing each strike price available in the orderbook
+    RedBlackTree.Tree public strikePrices;
+
+    // Red Black Tree for each strike price containing unit prices available for the strike
+    mapping(uint256 => RedBlackTree.Tree) public unitPricesAtStrike;
+
+    // mapping keccak256 hash of (strike and unit price) to list of orders (hashes) available at that price
+    mapping(bytes32 => LinkedList.List) public ordersAtPriceAndStrike;
+
+    // mapping user addresses to a list storing hashes of buy orders they've made NOTE: probably won't be used for v1
+    mapping(address => LinkedList.List) public userBuyOrders;
+
+    // mapping user addresses to a list storing hashes of sell orders they've made
+    mapping(address => LinkedList.List) public userSellOrders;
+
+    // mapping keccak256 hash of (order strike, unit price, seller address, and an incrementing nonce) to Order structs
+    mapping(bytes32 => Order) public orders;
+
+    uint256 private orderNonce;
 
     uint256 public roundStart; //round start timestamp for this orderbook
 
@@ -45,6 +74,7 @@ contract Orderbook is Initializable, OwnableUpgradeable {
         uint256 impliedVariance
     ) public initializer {
         OwnableUpgradeable.__Ownable_init();
+        orderNonce = 0;
         roundStart = startTimestamp;
         roundEnd = endTimestamp;
         bookOracle = oracle;
@@ -68,11 +98,11 @@ contract Orderbook is Initializable, OwnableUpgradeable {
         returns (
             uint256,
             uint256,
-            address,
-            uint256
+            uint256,
+            address
         )
     {
-        return (roundStart, roundEnd, bookOracle, roundImpliedVariance);
+        return (roundStart, roundEnd, roundImpliedVariance, bookOracle);
     }
 
     /*
@@ -82,31 +112,38 @@ contract Orderbook is Initializable, OwnableUpgradeable {
         return openOrders.length;
     }
 
-    /*
-     * Get the ask price, position id and seller address from an order.
+    /**
+     * @notice Get the ask price, position id and seller address from an order.
+     * @param orderHash unique keccak256 hash for order identification
+     * @return uint256 total ask price of order, uint256 index of user position, address of seller, bool of whether order has been filled
      */
-    function getOrder(uint256 index)
+    function getOrder(bytes32 orderHash)
         public
         view
         returns (
             uint256,
             uint256,
-            bool,
-            address
+            address,
+            bool
         )
     {
-        require(index < openOrders.length, "Orderbook: Invalid order index!");
-        Order memory currOrder = openOrders[index];
+        Order memory currOrder = orders[orderHash];
+        require(
+            currOrder.seller != 0,
+            "Orderbook: Tried to retrieve invalid order!"
+        );
         return (
-            currOrder.askPrice,
+            currOrder.totalAsk,
             currOrder.posIdx,
-            currOrder.unfilled,
-            currOrder.seller
+            currOrder.seller,
+            currOrder.unfilled
         );
     }
 
-    /*
-     * Get the number of positions a specific address holds.
+    /**
+     * @notice Get the number of positions a specific address holds.
+     * @param orderHash address of user
+     * @return uint256 number of positions belonging to user
      */
     function getNumberOfUserPositions(address addr)
         external
@@ -116,8 +153,11 @@ contract Orderbook is Initializable, OwnableUpgradeable {
         return userPositions[addr].positions.length;
     }
 
-    /*
-     * Get the position given an address and position index.
+    /**
+     * @notice Get the position given an address and position index.
+     * @param owner address of position owner
+     * @param index index of owner's position
+     * @return uint256 position's strike, int128 64.64 FP long position, int128 64.64 FP short position
      */
     function getPosition(address owner, uint256 index)
         public
@@ -141,8 +181,10 @@ contract Orderbook is Initializable, OwnableUpgradeable {
         );
     }
 
-    /*
-     * Display the payout from filled orders for a seller.
+    /**
+     * @notice Display the payout from filled orders for a seller.
+     * @param owner seller that payment is owed to
+     * @return uint256 total amount in wei claimable by seller for order payment
      */
     function getFilledOrderPayment(address owner)
         external
@@ -152,22 +194,27 @@ contract Orderbook is Initializable, OwnableUpgradeable {
         return userPositions[owner].filledOrderPayment;
     }
 
-    /*
-     * Display the payout from variance swap settlement.
+    /**
+     * @notice Display the payout from variance swap settlement.
+     * @param owner address that swap settlement is owed to
+     * @return uint256 total amount in wei claimable by user for swap settlement
      */
     function getUserSettlement(address owner) external view returns (uint256) {
         return userPositions[owner].userSettlement;
     }
 
-    /*
-     * Get total number of address that hold positions.
+    /**
+     * @notice Get total number of address that hold positions.
+     * @return uint256 number of users that hold positions on this orderbook
      */
     function getNumberOfActiveAddresses() external view returns (uint256) {
         return userAddresses.length;
     }
 
-    /*
-     * Get address by index.
+    /**
+     * @notice Get address by index.
+     * @param index index of address in userAddresses
+     * @return address returned by userAddresses for the provided index
      */
     function getAddrByIdx(uint256 index) external view returns (address) {
         require(
@@ -177,8 +224,10 @@ contract Orderbook is Initializable, OwnableUpgradeable {
         return userAddresses[index];
     }
 
-    /*
-     * Get the payout from filled orders for a seller. Set this value internally to 0 to signify the seller has received this payment.
+    /**
+     * @notice Get the payout from filled orders for a seller. Set this value internally to 0 to signify the seller has received this payment.
+     * @param owner address attempting to redeem payment
+     * @return uint256 amount in wei redeemed by seller for order payment
      */
     function redeemFilledOrderPayment(address owner)
         external
@@ -188,8 +237,10 @@ contract Orderbook is Initializable, OwnableUpgradeable {
         return VariancePosition._settleOrderPayment(userPositions[owner]);
     }
 
-    /*
-     * Get the total payout for variance swaps. Set this value internally to 0 to signify the seller has received this payment.
+    /**
+     * @notice Get the total payout for variance swaps. Set this value internally to 0 to signify the seller has received this payment.
+     * @param owner address attempting to redeem settlement
+     * @return uint256 amount in wei redeemed by user for swap settlement
      */
     function redeemUserSettlement(address owner)
         external
@@ -203,12 +254,18 @@ contract Orderbook is Initializable, OwnableUpgradeable {
         return VariancePosition._redeemUserSettlement(userPositions[owner]);
     }
 
+    /**
+     * @notice Retrieve settlement status of orderbook
+     * @return bool True if orderbook has been settled, False if not
+     */
     function isSettled() external view returns (bool) {
         return settled;
     }
 
-    /*
-     * Set the total payout for variance swaps. This is done from Controller smart contract.
+    /**
+     * @notice Set the swap settlement owed to a user, called during settleOrderBook()
+     * @param owner address settlement belongs to
+     * @param settlement settlement amount in wei
      */
     function setUserSettlement(address owner, uint256 settlement) internal {
         require(
@@ -218,14 +275,18 @@ contract Orderbook is Initializable, OwnableUpgradeable {
         VariancePosition._setUserSettlement(userPositions[owner], settlement);
     }
 
-    /*
-     * Open a sell order for a specific strike and ask price.
+    /**
+     * @notice Open a sell order for a specific strike and ask price.
+     * @param seller address of seller
+     * @param strike strike of swap being sold
+     * @param totalAsk total asking amount in wei
+     * @param totalUnits size of position in 0.1 ETH units
      */
     function sellOrder(
         address seller,
         uint256 strike,
-        uint256 askPrice,
-        int128 positionSize
+        uint256 totalAsk,
+        int128 totalUnits
     ) external onlyOwner {
         require(
             roundEnd > block.timestamp,
@@ -235,8 +296,8 @@ contract Orderbook is Initializable, OwnableUpgradeable {
             !settled,
             "Orderbook: Cannot submit sell order, orderbook has been settled!"
         );
-        require(askPrice != 0, "Orderbook: askPrice cannot be zero!");
-        require(positionSize != 0, "Orderbook: positionSize cannot be zero!");
+        require(totalAsk != 0, "Orderbook: totalAsk cannot be zero!");
+        require(totalUnits != 0, "Orderbook: totalUnits cannot be zero!");
         require(strike != 0, "Orderbook: strike cannot be zero!");
         uint256 index;
         uint256 initNumOfPositions = userPositions[seller].positions.length;
@@ -250,13 +311,13 @@ contract Orderbook is Initializable, OwnableUpgradeable {
         VariancePosition._addToPosition(
             userPositions[seller],
             strike,
-            positionSize,
-            positionSize,
+            totalUnits,
+            totalUnits,
             0,
             index
         );
         // Add this new sell order to the orderbook.
-        _addToOrderbook(seller, strike, askPrice, index);
+        addToOrderbook(seller, strike, totalAsk, totalUnits, index);
         // Maintain addresses that hold positions
         if (initNumOfPositions == 0) {
             userAddresses.push(seller);
@@ -271,6 +332,7 @@ contract Orderbook is Initializable, OwnableUpgradeable {
         uint256 minStrike,
         uint256 maxPrice
     ) external onlyOwner returns (uint256) {
+        // while RedBlackTree next() != 0 || buy amount depth reached
         require(
             roundEnd > block.timestamp,
             "Orderbook: Cannot submit buy order, round has ended!"
@@ -291,7 +353,7 @@ contract Orderbook is Initializable, OwnableUpgradeable {
 
         for (i = 0; i < openOrders.length; i++) {
             // Get ask price from order.
-            currAskPrice = openOrders[i].askPrice;
+            currAskPrice = openOrders[i].totalAsk;
             // Get strike from order.
             currStrike = userPositions[openOrders[i].seller].positions[
                 openOrders[i].posIdx
@@ -365,17 +427,19 @@ contract Orderbook is Initializable, OwnableUpgradeable {
         return remainingPremium;
     }
 
-    /*
-     * Get price in wei for buy order from the open orders that we maintain. We go from minimum strike and fill based on the number of units the buyer wants.
+    /**
+     * @notice Returns a quote of orders available in the orderbook given a minimum strike and desired swap exposure
+     * @param minStrike minimum strike
+     * @param unitsRequested desired amounts of unit exposure
+     * @return 3 arrays of size PAGESIZE of 64.64 FP units per order consumed, uint256 strike per order consumed, uint256 cost in wei per order consumed
      */
-    function getBuyOrderByUnitAmount(uint256 minStrike, int128 unitAmount)
+    function getBuyOrderByUnitAmount(uint256 minStrike, int128 unitsRequested)
         external
         view
         onlyOwner
         returns (
-            uint256,
-            int128,
             int128[PAGESIZE] memory,
+            uint256[PAGESIZE] memory,
             uint256[PAGESIZE] memory
         )
     {
@@ -387,143 +451,128 @@ contract Orderbook is Initializable, OwnableUpgradeable {
             !settled,
             "Orderbook: Cannot get quote, orderbook has been settled!"
         );
-        uint256 i;
+
+        bytes32 currOrderHash;
+        bytes32 strikeAndPriceHash;
+        int128 unitsLeft;
+        uint256 ct = 0;
         uint256 currStrike;
-        int128 currLongPositionAmount;
-        int128 adjustedAmount;
-        uint256 totalPrice = 0;
+        uint256 currUnitPrice;
+        uint256 currOrderID;
+        uint256 currOrderNext;
+        Order memory currOrder;
+        RedBlackTree.Tree memory _unitPricesAtStrike;
         int128[PAGESIZE] memory unitsToBuy;
         uint256[PAGESIZE] memory strikesToBuy;
-        uint256 ct = 0;
+        uint256[PAGESIZE] memory costOfOrders;
 
-        for (i = 0; i < openOrders.length && ct < PAGESIZE; i++) {
-            // Get strike from order.
-            currStrike = userPositions[openOrders[i].seller].positions[
-                openOrders[i].posIdx
-            ]
-                .strike;
-            // Get long position amount available from order.
-            currLongPositionAmount = userPositions[openOrders[i].seller]
-                .positions[openOrders[i].posIdx]
-                .longPositionAmount;
-            if (unitAmount == 0) {
-                // If we have filled already desired units from buyer, exit loop.
-                break;
-            } else if (openOrders[i].unfilled && currStrike >= minStrike) {
-                // Check the order is still open and we are at desired minimum strike.
-                if (unitAmount >= currLongPositionAmount) {
-                    // Check how much the current order can fill based on what is left from buyer units.
-                    adjustedAmount = currLongPositionAmount;
-                } else {
-                    adjustedAmount = unitAmount;
-                }
-                totalPrice = totalPrice.add(
-                    ABDKMath64x64.mulu(adjustedAmount, openOrders[i].askPrice)
-                );
-                // Update the remaining buyer units after the transaction performed.
-                unitAmount = ABDKMath64x64.sub(unitAmount, adjustedAmount);
-                // Maintain the long units and strikes that can be filled
-                unitsToBuy[ct] = adjustedAmount;
-                strikesToBuy[ct++] = currStrike;
-            }
+        unitsLeft = unitsRequested;
+        // start with the desired strike if it exists, else find the next available strike
+        if (RedBlackTree.exists(strikePrices, minStrike) == false) {
+            currStrike = RedBlackTree.next(strikePrices, minStrike);
+        } else {
+            currStrike = minStrike;
         }
-        return (totalPrice, unitAmount, unitsToBuy, strikesToBuy);
+        // search through orderbook until all units matched OR query size exceeds PAGESIZE
+        // search strikes starting from minStrike
+        while (currStrike != 0 || unitsLeft > 0 || ct < PAGESIZE) {
+            _unitPricesAtStrike = unitPricesAtStrike[currStrike];
+            currUnitPrice = RedBlackTree.first(_unitPricesAtStrike);
+            // search tree starting from lowest unit price
+            while (currUnitPrice != 0 || unitsLeft > 0 || ct < PAGESIZE) {
+                strikeAndPriceHash = keccak256(
+                    abi.encode(currStrike, currUnitPrice)
+                );
+                _ordersAtPriceAndStrike = ordersAtPriceAndStrike[
+                    strikeAndPriceHash
+                ];
+                currOrderID = _ordersAtPriceAndStrike.head;
+                // iterate through list of orders at unit price
+                while (currOrderID != 0 || unitsLeft > 0 || ct < PAGESIZE) {
+                    (, currOrderNext, currOrderHash) = LinkedList.get(
+                        _ordersAtPriceAndStrike,
+                        currOrderID
+                    );
+                    currOrder = orders[currOrderHash];
+                    // if order is greater than what is left to fulfill, calculate cost to partially consume and finish
+                    if (currOrder.totalUnits > unitsLeft) {
+                        unitsToBuy[ct] = unitsLeft;
+                        strikesToBuy[ct] = currStrike;
+                        costOfOrders[ct] = ABDKMath64x64.mulu(
+                            unitsLeft,
+                            currUnitPrice
+                        );
+                        unitsLeft = 0;
+                    }
+                    // else add order to the query and calculate amount we still need to fulfill
+                    else {
+                        unitsToBuy[ct] = currOrder.totalUnits;
+                        strikesToBuy[ct] = currStrike;
+                        costOfOrders[ct] = currOrder.totalAsk;
+                        unitsLeft = ABDKMath64x64.sub(
+                            unitsLeft,
+                            currOrder.totalUnits
+                        );
+                    }
+                    ct++;
+                    // find next order in list
+                    currOrderID = currOrderNext;
+                }
+                // find next lowest unit price
+                currUnitPrice = RedBlackTree.next(
+                    _unitPricesAtStrike,
+                    currUnitPrice
+                );
+            }
+            // find next strike
+            currStrike = RedBlackTree.next(strikePrices, currStrike);
+        }
+        return (unitsToBuy, strikesToBuy, costOfOrders);
     }
 
-    /*
-     * Add a new sell order to the orderbook struct.
+    /**
+     * @notice Inserts a sell order into the orderbook, sorted by strike, then unit price
+     * @param owner address of user making the order
+     * @param strike strike of the order
+     * @param totalAsk total asking amount in wei
+     * @param totalUnits size of order in 0.1 ETH units
+     * @param posIdx index of user position the order will be fullfilled from
      */
-    function _addToOrderbook(
+    function addToOrderbook(
         address owner,
         uint256 strike,
-        uint256 askPrice,
+        uint256 totalAsk,
+        int128 totalUnits,
         uint256 posIdx
     ) internal {
-        uint256 i;
-        uint256 currStrike;
-        uint256 currAskPrice;
-        uint256 currId;
-        address currAddr;
-        bool currUnfilled;
-        uint256 orderSize = openOrders.length;
-
-        if (orderSize == 0) {
-            // If this is first order, just push it into the struct.
-            openOrders.push(Order(askPrice, posIdx, owner, true));
-            return;
+        int128 invTotalUnits;
+        uint256 unitPrice;
+        bytes32 strikeAndPriceHash;
+        bytes32 orderHash;
+        // unit price = total units / total ask
+        invTotalUnits = ABDKMath64x64.inv(totalUnits);
+        unitPrice = ABDKMath64x64.mulu(invTotalUnits, totalAsk);
+        // calculate order hash and add order
+        orderHash = keccak256(abi.encode(strike, unitPrice, owner));
+        orders[orderHash] = Order(totalAsk, totalUnits, posIdx, owner, false);
+        // find or insert strike
+        if (RedBlackTree.exists(strikePrices, strike) == false) {
+            RedBlackTree.insert(strikePrices, strike);
         }
-
-        for (i = 0; i < orderSize; i++) {
-            currAddr = openOrders[i].seller; // Get seller from order.
-            currId = openOrders[i].posIdx; // Get position index from order.
-            currAskPrice = openOrders[i].askPrice; // Get ask price from order.
-            currUnfilled = openOrders[i].unfilled; // Get filled status from order
-            currStrike = userPositions[currAddr].positions[currId].strike; // Get strike from order.
-            if (
-                strike == currStrike &&
-                currAddr == owner &&
-                currAskPrice == askPrice &&
-                currUnfilled
-            ) {
-                // If the current order matches the new order, we exit out because its same so no need to update.
-                break;
-            } else if (
-                strike < currStrike ||
-                (strike == currStrike && askPrice < currAskPrice)
-            ) {
-                // Add new order into array in the first index where it has either lower strike or same strike but lower ask price.
-                _addNewOrder(owner, askPrice, posIdx, i);
-                break;
-            } else if (i == orderSize - 1) {
-                // If at the last entry in the orders, push this at the end.
-                openOrders.push(Order(askPrice, posIdx, owner, true));
-            }
+        // find or insert price per 0.1 ETH unit for strike
+        RedBlackTree.Tree storage _unitPricesAtStrike =
+            unitPricesAtStrike[strike];
+        if (RedBlackTree.exists(_unitPricesAtStrike, unitPrice) == false) {
+            RedBlackTree.insert(_unitPricesAtStrike, unitPrice);
         }
-    }
-
-    /*
-     * Add an order to the specified index and shift every order after the index one spot to the right.
-     */
-    function _addNewOrder(
-        address addr,
-        uint256 askPrice,
-        uint256 posIdx,
-        uint256 index
-    ) internal {
-        uint256 i;
-        uint256 currId;
-        uint256 currAskPrice;
-        address currAddr;
-        bool currUnfilled;
-        uint256 prevId;
-        uint256 prevAskPrice;
-        address prevAddr;
-        bool prevUnfilled;
-
-        // Push one new empty order to the orderbook struct. This will get filled by the order shifted to the right.
-        openOrders.push(Order(0, 0, address(0), false));
-        // Order parameters to be added at the starting index.
-        currId = posIdx;
-        currAddr = addr;
-        currAskPrice = askPrice;
-        currUnfilled = true;
-        for (i = index; i < openOrders.length; i++) {
-            // Keep the old order at this index because it will be added to next one.
-            prevAskPrice = openOrders[i].askPrice;
-            prevId = openOrders[i].posIdx;
-            prevAddr = openOrders[i].seller;
-            prevUnfilled = openOrders[i].unfilled;
-            // Update the current order to the one before it or the new order being inserted.
-            openOrders[i].askPrice = currAskPrice;
-            openOrders[i].posIdx = currId;
-            openOrders[i].seller = currAddr;
-            openOrders[i].unfilled = currUnfilled;
-            // Store the old order as current because it will replace the next one.
-            currId = prevId;
-            currAddr = prevAddr;
-            currAskPrice = prevAskPrice;
-            currUnfilled = prevUnfilled;
-        }
+        // navigate to list of orders at unit price and strike
+        strikeAndPriceHash = keccak256(abi.encode(strike, unitPrice));
+        LinkedList.List storage _ordersAtPriceAndStrike =
+            ordersAtPriceAndStrike[strikeAndPriceHash];
+        // add order to the end of list
+        LinkedList.addHead(_ordersAtPriceAndStrike, orderHash);
+        // record sell order for user
+        userSellOrders[owner].addHead(orderHash);
     }
 
     function settleOrderbook(uint256 realizedVar) external onlyOwner {

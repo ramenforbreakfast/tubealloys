@@ -195,14 +195,14 @@ contract Controller is
      * @notice Transfer ETH from user into our pool in exchange for an equivalent long and short position for the specified swap. Submits sell order for the long position.
      * @param bookID identifier of orderbook to mint swap for
      * @param minter address of user minting the swap
-     * @param varianceStrike variance strike of swap
+     * @param varianceStrike variance strike of swap, needs to be ABDK 64.64-bit fixed point integer
      * @param askPrice asking price of the order in wei
-     * @param positionSize units of variance to be sold (0.1 ETH units) needs to be ABDK 64.64-bit fixed point integer
+     * @param positionSize units of variance to be sold (0.1 ETH units), needs to be ABDK 64.64-bit fixed point integer
      */
     function sellSwapPosition(
         string memory bookID,
         address minter,
-        uint256 varianceStrike,
+        int128 varianceStrike,
         uint256 askPrice,
         int128 positionSize
     ) external nonReentrant onlyForSender(minter) onlyOnDeployedBooks(bookID) {
@@ -222,9 +222,10 @@ contract Controller is
             pool.getUserBalance(minter) >= collateral,
             "Controller: User has insufficient funds to collateralize swaps!"
         );
-
+        // Support precision to 0.0001 for strikes
+        uint256 strikeToU256 = ABDKMath64x64.mulu(varianceStrike, 1e4)
         pool.transfer(minter, deployedBooks[bookID], collateral);
-        currentBook.sellOrder(minter, varianceStrike, askPrice, positionSize);
+        currentBook.sellOrder(minter, strikeToU256, askPrice, positionSize);
     }
 
     /**
