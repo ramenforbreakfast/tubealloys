@@ -1,4 +1,5 @@
 pragma solidity ^0.7.3;
+import "../libs/synthetix/SafeDecimalMath.sol";
 
 contract Oracle {
     // Fake oracle contract for development purposes
@@ -7,12 +8,12 @@ contract Oracle {
         view
         returns (uint256)
     {
-        uint256 realized = 150;
+        uint256 realized = SafeDecimalMath.newFixed(150);
         return realized;
     }
 
     function getLatestImpliedVariance() external view returns (uint256) {
-        uint256 implied = 120;
+        uint256 implied = SafeDecimalMath.newFixed(120);
         return implied;
     }
 

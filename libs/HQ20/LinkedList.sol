@@ -1,4 +1,4 @@
-pragma solidity ^0.6.0;
+pragma solidity ^0.7.3;
 
 /**
  * @title LinkedList
@@ -98,9 +98,9 @@ library LinkedList {
         if (self.initialized != true) {
             newList(self);
         }
-        uint256 objectId = _createObject(_data);
-        _link(objectId, self.head);
-        _setHead(objectId);
+        uint256 objectId = _createObject(self, _data);
+        _link(self, objectId, self.head);
+        _setHead(self, objectId);
     }
 
     /**
@@ -111,11 +111,11 @@ library LinkedList {
             newList(self);
         }
         if (self.head == 0) {
-            addHead(_data);
+            addHead(self, _data);
         } else {
-            uint256 oldTailId = findTailId();
-            uint256 newTailId = _createObject(_data);
-            _link(oldTailId, newTailId);
+            uint256 oldTailId = findTailId(self);
+            uint256 newTailId = _createObject(self, _data);
+            _link(self, oldTailId, newTailId);
         }
     }
 
@@ -128,10 +128,10 @@ library LinkedList {
         }
         Object memory removeObject = self.objects[_id];
         if (self.head == _id) {
-            _setHead(removeObject.next);
+            _setHead(self, removeObject.next);
         } else {
-            uint256 prevObjectId = findPrevId(_id);
-            _link(prevObjectId, removeObject.next);
+            uint256 prevObjectId = findPrevId(self, _id);
+            _link(self, prevObjectId, removeObject.next);
         }
         delete self.objects[removeObject.id];
         emit ObjectRemoved(_id);
@@ -149,9 +149,9 @@ library LinkedList {
             newList(self);
         }
         Object memory prevObject = self.objects[_prevId];
-        uint256 newObjectId = _createObject(_data);
-        _link(newObjectId, prevObject.next);
-        _link(prevObject.id, newObjectId);
+        uint256 newObjectId = _createObject(self, _data);
+        _link(self, newObjectId, prevObject.next);
+        _link(self, prevObject.id, newObjectId);
     }
 
     /**
@@ -166,10 +166,10 @@ library LinkedList {
             newList(self);
         }
         if (_nextId == self.head) {
-            addHead(_data);
+            addHead(self, _data);
         } else {
-            uint256 prevId = findPrevId(_nextId);
-            insertAfter(prevId, _data);
+            uint256 prevId = findPrevId(self, _nextId);
+            insertAfter(self, prevId, _data);
         }
     }
 
