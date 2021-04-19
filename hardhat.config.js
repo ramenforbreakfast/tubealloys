@@ -7,6 +7,10 @@ require("hardhat-gas-reporter");
 /**
  * @type import('hardhat/config').HardhatUserConfig
  */
+
+const fs = require('fs');
+const path = require('path');
+
 module.exports = {
   solidity: "0.7.3",
   defaultNetwork: "hardhat",
@@ -38,6 +42,12 @@ module.exports = {
   mocha: {
     // Mocha timeout is for a whole test case, I originally thought this was for asynchronous calls waiting for a promise
     timeout: 15000000
+  },
+  gasReporter: {
+    showTimeSpent: true,
+    coinmarketcap: "59e17914-54d7-4a0b-8cd9-379769fdaf93",
+    onlyCalledMethods: true,
+    currency: "USD"
   }
 };
 

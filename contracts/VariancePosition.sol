@@ -79,7 +79,10 @@ library VariancePosition {
         uint256 orderPayment,
         uint256 index
     ) internal {
-        require(index < userPositions.positions.length);
+        require(
+            index < userPositions.positions.length,
+            "Variance Position: invalid position index!"
+        );
 
         userPositions.positions[index].longPositionAmount = userPositions
             .positions[index]

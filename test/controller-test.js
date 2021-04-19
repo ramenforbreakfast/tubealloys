@@ -12,6 +12,9 @@ let roundStart, roundEnd;
 let owner, addr1, addr2, addr3, addr4;
 let newBookID, newBookAddress, newOracleAddress, newBookStart, newBookEnd, newBookIV;
 
+let formatSpecs = { signed: false, width: 256, decimals: 8, name: "eightFixed" };
+//let eightFixed = ethers.fixedFormat.from(formatSpecs);
+
 function convertTo64x64(val) {
   two = BigNumber("2").pow(64);
   valBN = BigNumber(val);
@@ -43,8 +46,18 @@ function waitUntil(thisTime) {
   while (new Date().getTime() <= (thisTime * 1000)) true;
 }
 
+function printOrder(orderID, query) {
+  console.log("Order " + orderID)
+  console.log("Current Ask: " + ethers.utils.formatEther(query[2].div(1e8)) + " ETH, Current Units: " + (query[1] / 1e8).toString())
+  console.log("Belonging to: " + query[0] + " @ position index: " + query[5].toString());
+}
+
+function printPosition(query) {
+  console.log("Variance Position - Strike: " + (query[0] / 1e8).toString() + " Long: " + (query[1] / 1e8).toString() + " Short: " + (query[2] / 1e8).toString());
+}
+
 describe("Test Controller Contract", function () {
-  it("New Orderbook Should Return Correct Initialized Values", async function () {
+  it.only("New Orderbook Should Return Correct Initialized Values", async function () {
     /* DO NOT DO THIS 
      * getDefaultProvider sets the provider to a new provider
      * When I had this statement in the code, it reset the provider hardhat already initializes and had no
@@ -54,10 +67,11 @@ describe("Test Controller Contract", function () {
     */
 
     let i;
+    let id, next, data;
     let userAddresses = await ethers.getSigners();
     [owner, addr1, addr2, addr3, addr4] = userAddresses;
     console.log("Showing First 5 Addresses...")
-    for (i = 0; i < userAddresses.length; i++) {
+    for (i = 0; i < 5; i++) {
       console.log("Address: ", userAddresses[i].address);
       console.log("Balance: ", (await userAddresses[i].getBalance()).toString());
     }
@@ -86,21 +100,22 @@ describe("Test Controller Contract", function () {
     let initBookIV = await Oracle.getLatestImpliedVariance();
     newBookID = "ETH-" + initBookIV + "-" + roundStart + "-" + roundEnd;
     console.log("New Book Name: ", newBookID);
-    Orderbook = await upgrades.deployProxy(orderBookContract, [roundStart, roundEnd, Oracle.address, initBookIV]);
+    Orderbook = await upgrades.deployProxy(orderBookContract, [roundStart, roundEnd, initBookIV, Oracle.address]);
     await Orderbook.deployed();
     await Orderbook.transferOwnership(Controller.address);
 
     console.log("Orderbook Address: ", Orderbook.address);
     await Controller.addNewSwapBook(newBookID, Orderbook.address);
-    [newBookAddress, newBookStart, newBookEnd, newOracleAddress, newBookIV] = await Controller.getBookInfoByName(newBookID);
+    [newBookAddress, newBookStart, newBookEnd, newBookIV, newOracleAddress] = await Controller.getBookInfoByName(newBookID);
     console.log("New Orderbook Address: ", newBookAddress);
-    console.log("Round Start: ", newBookStart);
-    console.log("Round End: ", newBookEnd);
+    console.log("Round Start: ", newBookStart.toString());
+    console.log("Round End: ", newBookEnd.toString());
 
     expect(newBookStart).to.equal(roundStart);
     expect(newBookEnd).to.equal(roundEnd);
     expect(newOracleAddress).to.equal(Oracle.address);
     expect(newBookIV).to.equal(initBookIV);
+
     // Below does not work because JS numbers are 64 bit FP versus uint256 from solidity in this case
     /*
       expect(await Controller.getBookInfoByIndex(0)).to.equal([Oracle.address, roundStart, roundEnd]);
@@ -121,7 +136,7 @@ describe("Test Controller Contract", function () {
     // each value so Waffle understands. Perhaps there is a way to do this in a more compact way. idk
   });
 
-  it("Ensure users cannot call functions on undeployed orderbooks", async function () {
+  it.only("Ensure users cannot call functions on undeployed orderbooks", async function () {
     let badBookID = "Idontexist";
     await expect(Controller.connect(owner).settleSwapBook(badBookID)
     ).to.be.revertedWith("Controller: Cannot perform operation on undeployed orderbook!");
@@ -129,20 +144,20 @@ describe("Test Controller Contract", function () {
     await expect(Controller.connect(owner).getSettlementForUser(badBookID, addr1.address)
     ).to.be.revertedWith("Controller: Cannot perform operation on undeployed orderbook!");
 
-    await expect(Controller.connect(addr1).getQuoteForPosition(badBookID, 130, ethers.utils.parseEther("2.855"))
+    await expect(Controller.connect(addr1).getQuoteForPosition(badBookID, 130e8, 28.55e8)
     ).to.be.revertedWith("Controller: Cannot perform operation on undeployed orderbook!");
 
-    await expect(Controller.connect(addr1).buySwapPosition(badBookID, addr1.address, 130, ethers.utils.parseEther("2.855"))
+    await expect(Controller.connect(addr1).buySwapPosition(badBookID, addr1.address, 130e8, ethers.utils.parseEther("2"))
     ).to.be.revertedWith("Controller: Cannot perform operation on undeployed orderbook!");
 
-    await expect(Controller.connect(addr1).sellSwapPosition(badBookID, addr1.address, 130, ethers.utils.parseEther("0.08"), convertTo64x64(28.5))
+    await expect(Controller.connect(addr1).sellSwapPosition(badBookID, addr1.address, 130e8, ethers.utils.parseEther("0.08"), 28.55e8)
     ).to.be.revertedWith("Controller: Cannot perform operation on undeployed orderbook!");
 
     await expect(Controller.connect(addr1).redeemSwapPositions(badBookID, addr1.address)
     ).to.be.revertedWith("Controller: Cannot perform operation on undeployed orderbook!");
   });
 
-  it("Ensure users cannot settle or redeem swaps before end date", async function () {
+  it.only("Ensure users cannot settle or redeem swaps before end date", async function () {
     await expect(Controller.connect(owner).settleSwapBook(newBookID)
     ).to.be.revertedWith("Controller: Cannot settle swaps before round has ended!");
 
@@ -150,21 +165,18 @@ describe("Test Controller Contract", function () {
     ).to.be.revertedWith("Controller: Cannot redeem swap before round has been settled!");
   });
 
-  it("Ensure users can only buy/sell/redeem positions if they are the sender", async function () {
-    await expect(Controller.connect(addr2).buySwapPosition(newBookID, addr1.address, 130, ethers.utils.parseEther("2.855"))
+  it.only("Ensure users can only buy/sell/redeem positions if they are the sender", async function () {
+    await expect(Controller.connect(addr2).buySwapPosition(newBookID, addr1.address, 130e8, ethers.utils.parseEther("2"))
     ).to.be.revertedWith("Controller: Cannot perform operation for another user!");
 
-    await expect(Controller.connect(addr2).sellSwapPosition(newBookID, addr1.address, 130, ethers.utils.parseEther("0.08"), convertTo64x64(28.5))
+    await expect(Controller.connect(addr2).sellSwapPosition(newBookID, addr1.address, 130e8, ethers.utils.parseEther("0.08"), 28.55e8)
     ).to.be.revertedWith("Controller: Cannot perform operation for another user!");
 
     await expect(Controller.connect(addr2).redeemSwapPositions(newBookID, addr1.address)
     ).to.be.revertedWith("Controller: Cannot perform operation for another user!");
-
-    await expect(Controller.connect(addr2).buySwapPosition(newBookID, addr1.address, 130, ethers.utils.parseEther("2.855"))
-    ).to.be.revertedWith("Controller: Cannot perform operation for another user!");
   });
 
-  it("Deposit/Withdrawal of user funds", async function () {
+  it.only("Deposit/Withdrawal of user funds", async function () {
     await Pool.connect(addr1).deposit({ value: ethers.utils.parseEther("2.85") });
     expect(await Pool.getUserBalance(addr1.address)).to.equal(ethers.utils.parseEther("2.85"));
     expect(await addr1.getBalance()).to.equal(ethers.utils.parseEther("9997.15"));
@@ -178,124 +190,162 @@ describe("Test Controller Contract", function () {
     expect(await addr3.getBalance()).to.equal(ethers.utils.parseEther("9995"));
   });
 
-  it("Ensure users cannot spend more than they have", async function () {
+  it.only("Ensure users cannot spend more than they have", async function () {
     // Attempt to sell 28.6 variance units (2.86 ETH of collateral) with only 2.85 ETH deposited
-    await expect(Controller.connect(addr1).sellSwapPosition(newBookID, addr1.address, 130, ethers.utils.parseEther("0.08"), convertTo64x64(28.6))
+    await expect(Controller.connect(addr1).sellSwapPosition(newBookID, addr1.address, 130e8, ethers.utils.parseEther("2.288"), 28.6e8)
     ).to.be.revertedWith("Controller: User has insufficient funds to collateralize swaps!");
     // Verify that address 1 balance was not affected by reverted transaction
     expect(await Pool.connect(addr1).getUserBalance(addr1.address)).to.equal(ethers.utils.parseEther("2.85"));
 
     // Attempt to purchase 2.85001 ETH worth of swaps with only 2.85 ETH deposited
-    await expect(Controller.connect(addr1).buySwapPosition(newBookID, addr1.address, 130, ethers.utils.parseEther("2.85001"))
+    await expect(Controller.connect(addr1).buySwapPosition(newBookID, addr1.address, 130e8, ethers.utils.parseEther("2.85001"))
     ).to.be.revertedWith("Controller: User has insufficient funds to purchase swaps!");
     // Verify that address 1 balance was not affected by reverted transaction
     expect(await Pool.connect(addr1).getUserBalance(addr1.address)).to.equal(ethers.utils.parseEther("2.85"));
   });
 
-  it("Minting/Selling of variance units should be reflected in the Orderbook", async function () {
-    let askPrice, vaultId, seller, wasFilled;
+  it.only("Minting/Selling of variance units should be reflected in the Orderbook", async function () {
+    let sellEvent, orderID, orderQuery;
+    let sellerAddr, currUnits, currAsk, totalUnits, totalAsk, posIdx, filled;
     let posStrike, posLong, posShort;
+    let sellEventFilter = Controller.filters.SellOrder();
 
     // Sell 28.5 variance units @ 130 strike for 0.08/unit
     //let gasEstimate = await Controller.estimateGas.sellSwapPosition(newBookID, addr1.address, 130, ethers.utils.parseEther("0.08"), convertTo64x64(28.5));
     //console.log('Gas Estimate for sellSwapPosition: ', gasEstimate.toString());
-    await Controller.connect(addr1).sellSwapPosition(newBookID, addr1.address, 130, ethers.utils.parseEther("0.08"), convertTo64x64(28.5));
-    [askPrice, vaultId, wasFilled, seller] = await Orderbook.getOrder(0);
-    [posStrike, posLong, posShort] = await Orderbook.getPosition(seller, vaultId);
-    console.log("First Order - Ask Price: " + ethers.utils.formatEther(askPrice) + " ETH, VaultId: " + vaultId.toString() + ", Address: " + seller);
-    console.log("Variance Position - Strike: " + posStrike.toString() + " Long: " + posLong.toString() + "(" + convertFrom64x64(posLong) + ")" + " Short: " + posShort.toString() + "(" + convertFrom64x64(posShort) + ")");
-    expect(askPrice).to.equal(ethers.utils.parseEther("0.08"));
-    expect(seller).to.equal(addr1.address);
-    expect(posStrike).to.equal(130);
-    expect(convertFrom64x64(posLong)).to.equal(convertTo8DPString(28.5));
-    expect(convertFrom64x64(posShort)).to.equal(convertTo8DPString(28.5));
+    await Controller.connect(addr1).sellSwapPosition(newBookID, addr1.address, 130e8, ethers.utils.parseEther("2.28"), 28.5e8);
+    sellEvent = await Controller.queryFilter(sellEventFilter, "latest");
+    orderID = sellEvent[0].args.orderID;
+
+    orderQuery = [sellerAddr, currUnits, currAsk, totalUnits, totalAsk, posIdx, filled] = await Orderbook.getOrder(orderID);
+    positionQuery = [posStrike, posLong, posShort] = await Orderbook.getPosition(sellerAddr, posIdx);
+    printOrder(orderID, orderQuery);
+    printPosition(positionQuery);
+    expect(totalAsk).to.equal(currAsk);
+    expect(totalUnits).to.equal(currUnits);
+    expect(totalAsk.div(totalUnits)).to.equal(ethers.utils.parseEther("0.08"));
+    expect(sellerAddr).to.equal(addr1.address);
+    expect(posStrike).to.equal(130e8);
+    expect(posLong).to.equal(28.5e8);
+    expect(posShort).to.equal(28.5e8);
 
     // Sell 36.3 variance units @ 150 strike for 0.05/unit
-    await Controller.connect(addr2).sellSwapPosition(newBookID, addr2.address, 150, ethers.utils.parseEther("0.05"), convertTo64x64(36.3));
-    [askPrice, vaultId, wasFilled, seller] = await Orderbook.getOrder(1);
-    [posStrike, posLong, posShort] = await Orderbook.getPosition(seller, vaultId);
-    console.log("Second Order - Ask Price: " + ethers.utils.formatEther(askPrice) + " ETH, VaultId: " + vaultId.toString() + ", Address: " + seller);
-    console.log("Variance Position - Strike: " + posStrike.toString() + " Long: " + posLong.toString() + "(" + convertFrom64x64(posLong) + ")" + " Short: " + posShort.toString() + "(" + convertFrom64x64(posShort) + ")");
-    expect(askPrice).to.equal(ethers.utils.parseEther("0.05"));
-    expect(seller).to.equal(addr2.address);
-    expect(posStrike).to.equal(150);
-    expect(convertFrom64x64(posLong)).to.equal(convertTo8DPString(36.3));
-    expect(convertFrom64x64(posShort)).to.equal(convertTo8DPString(36.3));
+    await Controller.connect(addr2).sellSwapPosition(newBookID, addr2.address, 150e8, ethers.utils.parseEther("1.815"), 36.3e8);
+    sellEvent = await Controller.queryFilter(sellEventFilter, "latest");
+    orderID = sellEvent[0].args.orderID;
+
+    orderQuery = [sellerAddr, currUnits, currAsk, totalUnits, totalAsk, posIdx, filled] = await Orderbook.getOrder(orderID);
+    positionQuery = [posStrike, posLong, posShort] = await Orderbook.getPosition(sellerAddr, posIdx);
+    printOrder(orderID, orderQuery);
+    printPosition(positionQuery);
+    expect(totalAsk).to.equal(currAsk);
+    expect(totalUnits).to.equal(currUnits);
+    expect(totalAsk.div(totalUnits)).to.equal(ethers.utils.parseEther("0.05"));
+    expect(sellerAddr).to.equal(addr2.address);
+    expect(posStrike).to.equal(150e8);
+    expect(posLong).to.equal(36.3e8);
+    expect(posShort).to.equal(36.3e8);
 
     // Sell 13.6 variance units @ 125 strike for 0.09/unit
-    await Controller.connect(addr2).sellSwapPosition(newBookID, addr2.address, 125, ethers.utils.parseEther("0.09"), convertTo64x64(13.6));
-    [askPrice, vaultId, wasFilled, seller] = await Orderbook.getOrder(0);
-    [posStrike, posLong, posShort] = await Orderbook.getPosition(seller, vaultId);
-    console.log("Third Order - Ask Price: " + ethers.utils.formatEther(askPrice) + " ETH, VaultId: " + vaultId.toString() + ", Address: " + seller);
-    console.log("Variance Position - Strike: " + posStrike.toString() + " Long: " + posLong.toString() + "(" + convertFrom64x64(posLong) + ")" + " Short: " + posShort.toString() + "(" + convertFrom64x64(posShort) + ")");
-    expect(askPrice).to.equal(ethers.utils.parseEther("0.09"));
-    expect(seller).to.equal(addr2.address);
-    expect(posStrike).to.equal(125);
-    expect(convertFrom64x64(posLong)).to.equal(convertTo8DPString(13.6));
-    expect(convertFrom64x64(posShort)).to.equal(convertTo8DPString(13.6));
+    await Controller.connect(addr2).sellSwapPosition(newBookID, addr2.address, 125e8, ethers.utils.parseEther("1.224"), 13.6e8);
+    sellEvent = await Controller.queryFilter(sellEventFilter, "latest");
+    orderID = sellEvent[0].args.orderID;
+
+    orderQuery = [sellerAddr, currUnits, currAsk, totalUnits, totalAsk, posIdx, filled] = await Orderbook.getOrder(orderID);
+    positionQuery = [posStrike, posLong, posShort] = await Orderbook.getPosition(sellerAddr, posIdx);
+    printOrder(orderID, orderQuery);
+    printPosition(positionQuery);
+    expect(totalAsk).to.equal(currAsk);
+    expect(totalUnits).to.equal(currUnits);
+    expect(totalAsk.div(totalUnits)).to.equal(ethers.utils.parseEther("0.09"));
+    expect(sellerAddr).to.equal(addr2.address);
+    expect(posStrike).to.equal(125e8);
+    expect(posLong).to.equal(13.6e8);
+    expect(posShort).to.equal(13.6e8);
 
     // Sell 15.4 variance units @ 125 strike for 0.09/unit
-    await Controller.connect(addr2).sellSwapPosition(newBookID, addr2.address, 125, ethers.utils.parseEther("0.09"), convertTo64x64(15.4));
-    [askPrice, vaultId, wasFilled, seller] = await Orderbook.getOrder(0);
-    [posStrike, posLong, posShort] = await Orderbook.connect(owner).getPosition(seller, vaultId);
-    console.log("Fourth Order - Ask Price: " + ethers.utils.formatEther(askPrice) + " ETH, VaultId: " + vaultId.toString() + ", Address: " + seller);
-    console.log("Variance Position - Strike: " + posStrike.toString() + " Long: " + posLong.toString() + "(" + convertFrom64x64(posLong) + ")" + " Short: " + posShort.toString() + "(" + convertFrom64x64(posShort) + ")");
-    expect(askPrice).to.equal(ethers.utils.parseEther("0.09"));
-    expect(seller).to.equal(addr2.address);
-    expect(posStrike).to.equal(125);
-    expect(convertFrom64x64(posLong)).to.equal(convertTo8DPString(29));
-    expect(convertFrom64x64(posShort)).to.equal(convertTo8DPString(29));
+    await Controller.connect(addr2).sellSwapPosition(newBookID, addr2.address, 125e8, ethers.utils.parseEther("1.386"), 15.4e8);
+    sellEvent = await Controller.queryFilter(sellEventFilter, "latest");
+    orderID = sellEvent[0].args.orderID;
+
+    orderQuery = [sellerAddr, currUnits, currAsk, totalUnits, totalAsk, posIdx, filled] = await Orderbook.getOrder(orderID);
+    positionQuery = [posStrike, posLong, posShort] = await Orderbook.getPosition(sellerAddr, posIdx);
+    printOrder(orderID, orderQuery);
+    printPosition(positionQuery);
+    expect(totalAsk).to.equal(currAsk);
+    expect(totalUnits).to.equal(currUnits);
+    expect(totalAsk.div(totalUnits)).to.equal(ethers.utils.parseEther("0.09"));
+    expect(sellerAddr).to.equal(addr2.address);
+    expect(posStrike).to.equal(125e8);
+    expect(posLong).to.equal(29e8);
+    expect(posShort).to.equal(29e8);
   });
 
-  it("Testing correct order matching for swap purchase quotes and purchase orders", async function () {
+  it.only("Testing correct order matching for swap purchase quotes and purchase orders", async function () {
     let results;
-    let buyTx;
-    let buyReceipt;
-    console.log("Getting quote for 40 units @ 130 strike");
-    results = await Controller.connect(addr3).getQuoteForPosition(newBookID, 130, convertTo64x64(40));
-    console.log("Quote Total Price: " + ethers.utils.formatEther(results[0]) + " ETH, " + "(" + convertFrom64x64(results[1]) + ")" + " Units Unfulfilled");
-    expect(ethers.utils.formatEther(results[0])).to.equal("2.855");
-    expect(convertFrom64x64(results[1])).to.equal("0.00000000");
+    let orderIDS;
+    let buyEvent;
+    let buyEventFilter = Controller.filters.BuyOrder();
+
+    console.log("GETTING quote for 40 units @ 130 strike");
+    results = await Controller.connect(addr3).getQuoteForPosition(newBookID, 130e8, 40e8);
+    console.log("(" + results[0] / 1e8 + ")" + " Units Left Unmatched" + ", Units to Partially Purchase From Last Order: " + results[1] / 1e8);
+    expect(results[0] / 1e8).to.equal(0);
+    expect(results[1] / 1e8).to.equal(11.5);
+    orderIDS = results[2];
+    for (let i = 0; i < 10; i++) {
+      if (orderIDS[i] != 0) {
+        orderQuery = await Orderbook.getOrder(orderIDS[i]);
+        printOrder(orderIDS[i], orderQuery);
+      }
+    }
 
     // Get quote for 80 variance units @ 130 strike
-    console.log("Getting quote for 80 units @ 130 strike");
-    results = await Controller.connect(addr3).getQuoteForPosition(newBookID, 130, convertTo64x64(80));
-    console.log("Quote Total Price: " + ethers.utils.formatEther(results[0]) + " ETH, " + "(" + convertFrom64x64(results[1]) + ")" + " Units Unfulfilled");
-    expect(ethers.utils.formatEther(results[0])).to.equal("4.095");
-    expect(convertFrom64x64(results[1])).to.equal("15.20000000");
+    console.log("GETTING quote for 80 units @ 130 strike");
+    results = await Controller.connect(addr3).getQuoteForPosition(newBookID, 130e8, 80e8);
+    console.log("(" + results[0] / 1e8 + ")" + " Units Left Unmatched" + ", Units to Partially Purchase From Last Order: " + results[1] / 1e8);
+    expect(results[0] / 1e8).to.equal(15.2);
+    expect(results[1] / 1e8).to.equal(0);
+    orderIDS = results[2];
+    for (let i = 0; i < 10; i++) {
+      if (orderIDS[i] != 0) {
+        orderQuery = await Orderbook.getOrder(orderIDS[i]);
+        printOrder(orderIDS[i], orderQuery);
+      }
+    }
 
     // Purchase 2.855 ETH of 130 strike
     // non view function returns a dictionary, need to access value field
-    console.log("Attempt to purchase 2.855 ETH of 130 strike swap");
-    buyTx = await Controller.connect(addr3).buySwapPosition(newBookID, addr3.address, 130, ethers.utils.parseEther("2.855"));
-    try {
-      buyReceipt = await buyTx.wait();
-    } catch (e) {
-      console.log(`Transaction Receipt Not Received!\n${e}`);
-    }
-    expect(buyReceipt.events[0].args.remainder).to.equal(ethers.utils.parseEther("0"));
+    console.log("ATTEMPT to purchase 2.855 ETH of 130 strike swap");
+    await Controller.connect(addr3).buySwapPosition(newBookID, addr3.address, 130e8, ethers.utils.parseEther("2.855"));
+    buyEvent = await Controller.queryFilter(buyEventFilter, "latest");
     // Expect remaining position to be filled to be zero
+    expect(buyEvent[0].args.remainder).to.equal(0);
 
     // Get quote for 40 variance units @ 130 strike
-    console.log("Getting quote for 40 units @ 130 strike");
-    results = await Controller.connect(addr3).getQuoteForPosition(newBookID, 130, convertTo64x64(40));
-    console.log("Quote Total Price: " + ethers.utils.formatEther(results[0]) + " ETH, " + "(" + convertFrom64x64(results[1]) + ")" + " Units Unfulfilled");
-    expect(ethers.utils.formatEther(results[0])).to.equal("1.24");
-    expect(convertFrom64x64(results[1])).to.equal("15.20000000");
+    console.log("GETTING quote for 40 units @ 130 strike");
+    results = await Controller.connect(addr3).getQuoteForPosition(newBookID, 130e8, 40e8);
+    console.log("(" + results[0] / 1e8 + ")" + " Units Left Unmatched" + ", Units to Partially Purchase From Last Order: " + results[1] / 1e8);
+    expect(results[0] / 1e8).to.equal(15.19999972);
+    expect(results[1] / 1e8).to.equal(0);
+    orderIDS = results[2];
+    for (let i = 0; i < 10; i++) {
+      if (orderIDS[i] != 0) {
+        orderQuery = await Orderbook.getOrder(orderIDS[i]);
+        printOrder(orderIDS[i], orderQuery);
+      }
+    }
 
     // Test purchase here to verify that the sell function transfers the remainder back to the user if the buy order could not be completely filled.
     // Attempt to purchase 1.30 ETH worth of swaps @ 130 to exceed the quoted supply of 15.2 units for 1.24 ETH.
-    console.log("Attempt to purchase 1.30 ETH of 130 strike swap");
-    buyTx = await Controller.connect(addr3).buySwapPosition(newBookID, addr3.address, 130, ethers.utils.parseEther("1.30"));
-    try {
-      buyReceipt = await buyTx.wait();
-    } catch (e) {
-      console.log(`Transaction Receipt Not Received!\n${e}`);
-    }
-    expect(buyReceipt.events[0].args.remainder).to.equal(ethers.utils.parseEther("0.06"));
+    console.log("ATTEMPT to purchase 1.30 ETH of 130 strike swap");
+    await Controller.connect(addr3).buySwapPosition(newBookID, addr3.address, 130e8, ethers.utils.parseEther("1.30"));
+    buyEvent = await Controller.queryFilter(buyEventFilter, "latest");
+    expect(buyEvent[0].args.remainder).to.equal(ethers.utils.parseEther("0.06"));
 
+    // Expect remaining funds in our platform to be 0.905 ETH after purchase.
     let userBalance = await Pool.connect(addr3).getUserBalance(addr3.address);
-    expect(userBalance).to.equal(ethers.utils.parseEther("0.905")); // Expect remaining funds in our platform to be 0.905 ETH after purchase.
+    expect(userBalance).to.equal(ethers.utils.parseEther("0.905"));
   });
 
   it("Testing retrieval of user positions", async function () {
@@ -412,7 +462,7 @@ describe("Test Controller Contract", function () {
     expect(await addr3.getBalance()
     ).to.equal(ethers.utils.parseEther("9996.475"));
   });
-
+  /*
   it.only("Gas stress test", async function () {
     let i, k;
     let userAddresses = await ethers.getSigners();
@@ -516,7 +566,7 @@ describe("Test Controller Contract", function () {
       //console.log("Address: " + currAddress.address + " BOUGHT " + buyPrice.toString() + " ETH of 130 strike swaps");
     }
 
-
   })
+  */
 });
 

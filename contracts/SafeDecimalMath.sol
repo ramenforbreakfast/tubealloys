@@ -8,17 +8,10 @@ library SafeDecimalMath {
     using SafeMathUpgradeable for uint256;
 
     /* Number of decimal places in the representations. */
-    uint8 public constant decimals = 8;
+    uint8 constant decimals = 8;
 
     /* The number representing 1.0. */
-    uint256 public constant UNIT = 10**uint256(decimals);
-
-    /**
-     * @return Provides an interface to UNIT.
-     */
-    function unit() external pure returns (uint256) {
-        return UNIT;
-    }
+    uint256 constant UNIT = 10**uint256(decimals);
 
     /**
      * @notice Converts an int256 to fixed point units, equivalent to multiplying
@@ -28,7 +21,7 @@ library SafeDecimalMath {
      * Test newFixed(maxNewFixed()) returns maxNewFixed() * fixed1()
      * Test newFixed(maxNewFixed()+1) fails
      */
-    function newFixed(uint256 x) public pure returns (uint256) {
+    function newFixed(uint256 x) internal pure returns (uint256) {
         return x.mul(UNIT);
     }
 
@@ -36,7 +29,7 @@ library SafeDecimalMath {
      * @notice Converts an int256 in the fixed point representation of this
      * library to a non decimal. All decimal digits will be truncated.
      */
-    function fromFixed(uint256 x) public pure returns (uint256) {
+    function fromFixed(uint256 x) internal pure returns (uint256) {
         return x.div(UNIT);
     }
 

@@ -21,7 +21,7 @@ interface OrderbookInterface {
             address
         );
 
-    function getOrder(bytes32 orderHash)
+    function getOrder(uint256 orderID)
         external
         view
         returns (
@@ -67,7 +67,7 @@ interface OrderbookInterface {
         uint256 strike,
         uint256 totalAsk,
         uint256 totalUnits
-    ) external;
+    ) external returns (uint256);
 
     function fillBuyOrderByMaxPrice(
         address buyer,
@@ -79,8 +79,8 @@ interface OrderbookInterface {
         external
         view
         returns (
-            uint256[1000] memory,
-            uint256[1000] memory,
+            uint256,
+            uint256,
             uint256[1000] memory
         );
 

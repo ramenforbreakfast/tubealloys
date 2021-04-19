@@ -6,15 +6,10 @@ pragma solidity ^0.7.3;
  * @author Alberto Cuesta Cañada
  */
 library LinkedList {
-    event ObjectCreated(uint256 id, bytes32 data);
-    event ObjectsLinked(uint256 prev, uint256 next);
-    event ObjectRemoved(uint256 id);
-    event NewHead(uint256 id);
-
     struct Object {
         uint256 id;
         uint256 next;
-        bytes32 data;
+        uint256 data;
     }
 
     struct List {
@@ -42,11 +37,15 @@ library LinkedList {
         returns (
             uint256,
             uint256,
-            bytes32
+            uint256
         )
     {
-        Object memory object = self.objects[_id];
-        return (object.id, object.next, object.data);
+        require(self.initialized == true, "List has not been initialized!");
+        return (
+            self.objects[_id].id,
+            self.objects[_id].next,
+            self.objects[_id].data
+        );
     }
 
     /**
@@ -57,44 +56,47 @@ library LinkedList {
         view
         returns (uint256)
     {
+        require(self.initialized == true, "List has not been initialized!");
         if (_id == self.head) return 0;
-        Object memory prevObject = self.objects[self.head];
-        while (prevObject.next != _id) {
-            prevObject = self.objects[prevObject.next];
+        uint256 prevNext = self.objects[self.head].next;
+        while (prevNext != _id) {
+            prevNext = self.objects[prevNext].next;
         }
-        return prevObject.id;
+        return self.objects[prevNext].id;
     }
 
     /**
      * @dev Returns the id for the Tail.
      */
     function findTailId(List storage self) internal view returns (uint256) {
-        Object memory oldTailObject = self.objects[self.head];
-        while (oldTailObject.next != 0) {
-            oldTailObject = self.objects[oldTailObject.next];
+        require(self.initialized == true, "List has not been initialized!");
+        uint256 prevNext = self.objects[self.head].next;
+        while (prevNext != 0) {
+            prevNext = self.objects[prevNext].next;
         }
-        return oldTailObject.id;
+        return self.objects[prevNext].id;
     }
 
     /**
      * @dev Return the id of the first Object matching `_data` in the data field.
      */
-    function findIdForData(List storage self, bytes32 _data)
+    function findIdForData(List storage self, uint256 _data)
         internal
         view
         returns (uint256)
     {
-        Object memory object = self.objects[self.head];
-        while (object.data != _data) {
-            object = self.objects[object.next];
+        require(self.initialized == true, "List has not been initialized!");
+        uint256 prevObjNext = self.head;
+        while (self.objects[prevObjNext].data != _data) {
+            prevObjNext = self.objects[prevObjNext].next;
         }
-        return object.id;
+        return self.objects[prevObjNext].id;
     }
 
     /**
      * @dev Insert a new Object as the new Head with `_data` in the data field.
      */
-    function addHead(List storage self, bytes32 _data) internal {
+    function addHead(List storage self, uint256 _data) internal {
         if (self.initialized != true) {
             newList(self);
         }
@@ -106,7 +108,7 @@ library LinkedList {
     /**
      * @dev Insert a new Object as the new Tail with `_data` in the data field.
      */
-    function addTail(List storage self, bytes32 _data) internal {
+    function addTail(List storage self, uint256 _data) internal {
         if (self.initialized != true) {
             newList(self);
         }
@@ -126,15 +128,13 @@ library LinkedList {
         if (self.initialized != true) {
             newList(self);
         }
-        Object memory removeObject = self.objects[_id];
         if (self.head == _id) {
-            _setHead(self, removeObject.next);
+            _setHead(self, self.objects[_id].next);
         } else {
             uint256 prevObjectId = findPrevId(self, _id);
-            _link(self, prevObjectId, removeObject.next);
+            _link(self, prevObjectId, self.objects[_id].next);
         }
-        delete self.objects[removeObject.id];
-        emit ObjectRemoved(_id);
+        delete self.objects[_id];
     }
 
     /**
@@ -143,15 +143,14 @@ library LinkedList {
     function insertAfter(
         List storage self,
         uint256 _prevId,
-        bytes32 _data
+        uint256 _data
     ) internal {
         if (self.initialized != true) {
             newList(self);
         }
-        Object memory prevObject = self.objects[_prevId];
         uint256 newObjectId = _createObject(self, _data);
-        _link(self, newObjectId, prevObject.next);
-        _link(self, prevObject.id, newObjectId);
+        _link(self, newObjectId, self.objects[_prevId].next);
+        _link(self, _prevId, newObjectId);
     }
 
     /**
@@ -160,7 +159,7 @@ library LinkedList {
     function insertBefore(
         List storage self,
         uint256 _nextId,
-        bytes32 _data
+        uint256 _data
     ) internal {
         if (self.initialized != true) {
             newList(self);
@@ -181,13 +180,12 @@ library LinkedList {
             newList(self);
         }
         self.head = _id;
-        emit NewHead(_id);
     }
 
     /**
      * @dev Internal function to create an unlinked Object.
      */
-    function _createObject(List storage self, bytes32 _data)
+    function _createObject(List storage self, uint256 _data)
         internal
         returns (uint256)
     {
@@ -196,10 +194,8 @@ library LinkedList {
         }
         uint256 newId = self.idCounter;
         self.idCounter += 1;
-        Object memory object = Object(newId, 0, _data);
-        self.objects[object.id] = object;
-        emit ObjectCreated(object.id, object.data);
-        return object.id;
+        self.objects[newId] = Object(newId, 0, _data);
+        return newId;
     }
 
     /**
@@ -214,6 +210,5 @@ library LinkedList {
             newList(self);
         }
         self.objects[_prevId].next = _nextId;
-        emit ObjectsLinked(_prevId, _nextId);
     }
 }

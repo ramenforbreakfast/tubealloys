@@ -214,6 +214,31 @@ library BokkyPooBahsRedBlackTreeLibrary {
         return key;
     }
 
+    function findNearest(Tree storage self, uint256 target)
+        internal
+        view
+        returns (uint256 cursor)
+    {
+        require(target != EMPTY);
+        require(!exists(self, target));
+        cursor = EMPTY;
+        uint256 probe = self.root;
+        while (probe != EMPTY) {
+            cursor = probe;
+            if (target < probe) {
+                probe = self.nodes[probe].left;
+            } else {
+                probe = self.nodes[probe].right;
+            }
+        }
+        target = self.nodes[cursor].right;
+        while (cursor != EMPTY && target == self.nodes[cursor].right) {
+            target = cursor;
+            cursor = self.nodes[cursor].parent;
+        }
+        return cursor;
+    }
+
     function rotateLeft(Tree storage self, uint256 key) private {
         uint256 cursor = self.nodes[key].right;
         uint256 keyParent = self.nodes[key].parent;

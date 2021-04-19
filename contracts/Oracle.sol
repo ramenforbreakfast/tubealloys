@@ -1,7 +1,9 @@
 pragma solidity ^0.7.3;
-import "../libs/synthetix/SafeDecimalMath.sol";
+import {SafeDecimalMath} from "./SafeDecimalMath.sol";
 
 contract Oracle {
+    using SafeDecimalMath for uint256;
+
     // Fake oracle contract for development purposes
     function getRealized(uint256 roundStart, uint256 roundEnd)
         external

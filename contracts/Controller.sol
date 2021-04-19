@@ -4,8 +4,7 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/math/SafeMathUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/Initializable.sol";
-import "../libs/synthetix/SafeDecimalMath.sol";
-import {Settlement} from "./Settlement.sol";
+import {SafeDecimalMath} from "./SafeDecimalMath.sol";
 import {VariancePosition} from "./VariancePosition.sol";
 import {PoolInterface} from "../interfaces/PoolInterface.sol";
 import {OracleInterface} from "../interfaces/OracleInterface.sol";
@@ -123,9 +122,9 @@ contract Controller is
      * @param bookID identifier of orderbook to purchase from
      * @param varianceStrike variance strike of swap (8 fixed point precision)
      * @param positionSize units of variance to be purchased in 0.1 ETH units (8 fixed point precision)
-     * @return unitsToBuy (uint256) array of size PAGESIZE units per order consumed (8 fixed point precision)
-     * @return strikesToBuy (uint256) array of size PAGESIZE strike per order consumed (8 fixed point precision)
-     * @return costToBuy (uint256) array of size PAGESIZE cost in wei per order consumed (8 fixed point precision)
+     * @return unitsLeft (uint256) number of units that could not be matched to an order (8 fixed point precision)
+     * @return portionOfLastOrder (uint256) number of units to purchase from the last order (8 fixed point precision)
+     * @return ordersToBuy (uint256) array of size PAGESIZE of orders that fulfill the query
      */
     function getQuoteForPosition(
         string memory bookID,
@@ -136,9 +135,9 @@ contract Controller is
         view
         onlyOnDeployedBooks(bookID)
         returns (
-            uint256[PAGESIZE] memory unitsToBuy,
-            uint256[PAGESIZE] memory strikesToBuy,
-            uint256[PAGESIZE] memory costToBuy
+            uint256 unitsLeft,
+            uint256 portionOfLastOrder,
+            uint256[PAGESIZE] memory ordersToBuy
         )
     {
         OrderbookInterface currentBook =
@@ -150,9 +149,9 @@ contract Controller is
             "Controller: Cannot retrieve position quote for a round that has ended!"
         );
 
-        (unitsToBuy, strikesToBuy, costToBuy) = currentBook
+        (unitsLeft, portionOfLastOrder, ordersToBuy) = currentBook
             .getBuyOrderByUnitAmount(varianceStrike, positionSize);
-        return (unitsToBuy, strikesToBuy, costToBuy);
+        return (unitsLeft, portionOfLastOrder, ordersToBuy);
     }
 
     event BuyOrder(address buyer, uint256 remainder);
@@ -163,20 +162,13 @@ contract Controller is
      * @param buyer address of user purchasing the swap
      * @param varianceStrike variance strike of swap (8 fixed point precision)
      * @param payment amount given by the buyer to pay for their position.
-     * @return (uint256) amount in wei returned the user for orders that could not be purchased.
      */
     function buySwapPosition(
         string memory bookID,
         address buyer,
         uint256 varianceStrike,
         uint256 payment
-    )
-        external
-        nonReentrant
-        onlyForSender(buyer)
-        onlyOnDeployedBooks(bookID)
-        returns (uint256)
-    {
+    ) external nonReentrant onlyForSender(buyer) onlyOnDeployedBooks(bookID) {
         OrderbookInterface currentBook =
             OrderbookInterface(deployedBooks[bookID]);
 
@@ -207,12 +199,14 @@ contract Controller is
         emit BuyOrder(buyer, remainder);
     }
 
+    event SellOrder(address seller, uint256 orderID);
+
     /**
      * @notice Transfer ETH from user into our pool in exchange for an equivalent long and short position for the specified swap. Submits sell order for the long position.
      * @param bookID identifier of orderbook to mint swap for
      * @param minter address of user minting the swap
      * @param varianceStrike variance strike of swap (8 fixed point precision)
-     * @param askPrice asking price of the order in wei (8 fixed point precision)
+     * @param askPrice asking price of the order in wei
      * @param positionSize units of variance to be sold in 0.1 ETH units (8 fixed point precision)
      */
     function sellSwapPosition(
@@ -230,16 +224,27 @@ contract Controller is
             roundEnd > block.timestamp,
             "Controller: Cannot mint swaps for a round that has ended!"
         );
-
+        // convert unit price to 8 fixed point precision
+        uint256 fixedAskPrice = SafeDecimalMath.newFixed(askPrice);
         // calculate collateral required using 8 fixed point precision
         uint256 collateral =
-            SafeDecimalMath.multiplyDecimal(positionSize, VARIANCE_UNIT);
+            SafeDecimalMath.fromFixed(
+                SafeDecimalMath.multiplyDecimal(positionSize, VARIANCE_UNIT)
+            );
         require(
             pool.getUserBalance(minter) >= collateral,
             "Controller: User has insufficient funds to collateralize swaps!"
         );
         pool.transfer(minter, deployedBooks[bookID], collateral);
-        currentBook.sellOrder(minter, varianceStrike, askPrice, positionSize);
+        uint256 orderID =
+            currentBook.sellOrder(
+                minter,
+                varianceStrike,
+                fixedAskPrice,
+                positionSize
+            );
+
+        emit SellOrder(minter, orderID);
     }
 
     /**
