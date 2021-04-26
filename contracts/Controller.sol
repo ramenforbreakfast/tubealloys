@@ -273,6 +273,27 @@ contract Controller is
     }
 
     /**
+     * @notice Transfer ETH from our pool to the user for their payout on their sold olders
+     * @param bookID identifier of orderbook to redeem payments from
+     * @param redeemer address of user redeeming payments
+     */
+    function redeemOrderPayments(string memory bookID, address redeemer)
+        external
+        nonReentrant
+        onlyForSender(redeemer)
+        onlyOnDeployedBooks(bookID)
+    {
+        OrderbookInterface currentBook =
+            OrderbookInterface(deployedBooks[bookID]);
+        // convert 8 fixed point precision settlement to non decimal wei value
+        uint256 payment =
+            SafeDecimalMath.fromFixed(
+                currentBook.redeemOrderPayments(redeemer)
+            );
+        pool.transfer(deployedBooks[bookID], redeemer, payment);
+    }
+
+    /**
      * @notice Get information about a deployed orderbook from its index
      * @param bookID orderbook identifier
      * @return (address) address of the orderbook

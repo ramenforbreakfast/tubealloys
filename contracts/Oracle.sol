@@ -10,12 +10,12 @@ contract Oracle {
         view
         returns (uint256)
     {
-        uint256 realized = SafeDecimalMath.newFixed(150);
+        uint256 realized = 15e7;
         return realized;
     }
 
     function getLatestImpliedVariance() external view returns (uint256) {
-        uint256 implied = SafeDecimalMath.newFixed(120);
+        uint256 implied = 12e7;
         return implied;
     }
 

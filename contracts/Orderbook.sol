@@ -370,9 +370,7 @@ contract Orderbook is Initializable, OwnableUpgradeable {
         }
 
         // start with the desired strike if it exists, else find the next available strike
-        if (RedBlackTree.exists(strikePrices, minStrike) == false) {
-            minStrike = RedBlackTree.findNearest(strikePrices, minStrike);
-        }
+        minStrike = RedBlackTree.findNearest(strikePrices, minStrike);
         // search through orderbook until all units matched OR query size exceeds PAGESIZE
         // search strikes starting from minStrike
         while (minStrike != 0 && amountToSpend > 0) {
@@ -544,9 +542,7 @@ contract Orderbook is Initializable, OwnableUpgradeable {
 
         portionOfLastOrder = 0;
         // start with the desired strike if it exists, else find the next available strike
-        if (RedBlackTree.exists(strikePrices, minStrike) == false) {
-            minStrike = RedBlackTree.findNearest(strikePrices, minStrike);
-        }
+        minStrike = RedBlackTree.findNearest(strikePrices, minStrike);
         // search through orderbook until all units matched OR query size exceeds PAGESIZE
         // search strikes starting from minStrike
         while (minStrike != 0 && unitsRequested > 0 && ct < PAGESIZE) {

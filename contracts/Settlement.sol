@@ -1,6 +1,7 @@
 pragma solidity ^0.7.3;
 
 import "@openzeppelin/contracts-upgradeable/math/SafeMathUpgradeable.sol";
+import {SafeDecimalMath} from "./SafeDecimalMath.sol";
 
 library Settlement {
     using SafeMathUpgradeable for uint256;
@@ -22,8 +23,10 @@ library Settlement {
     ) internal pure returns (uint256) {
         uint256 longPayoutPerSwap = calcPayoutPerSwap(realizedVar, strikeVar);
         uint256 shortPayoutPerSwap = VARIANCE_UNIT.sub(longPayoutPerSwap);
-        uint256 longPayout = longPosition.mul(longPayoutPerSwap);
-        uint256 shortPayout = shortPosition.mul(shortPayoutPerSwap);
+        uint256 longPayout =
+            SafeDecimalMath.multiplyDecimal(longPosition, longPayoutPerSwap);
+        uint256 shortPayout =
+            SafeDecimalMath.multiplyDecimal(shortPosition, shortPayoutPerSwap);
         return shortPayout.add(longPayout);
     }
 
@@ -39,7 +42,10 @@ library Settlement {
     {
         uint256 payoutPerSwap =
             strikeVar < realizedVar
-                ? (realizedVar.sub(strikeVar)).mul(VARIANCE_UNIT)
+                ? SafeDecimalMath.multiplyDecimal(
+                    (realizedVar.sub(strikeVar)),
+                    VARIANCE_UNIT
+                )
                 : 0;
         // fully collateralized, payout cannot exceed size of swap
         return payoutPerSwap > VARIANCE_UNIT ? VARIANCE_UNIT : payoutPerSwap;

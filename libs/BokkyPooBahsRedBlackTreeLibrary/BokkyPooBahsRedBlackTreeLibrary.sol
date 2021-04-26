@@ -220,24 +220,30 @@ library BokkyPooBahsRedBlackTreeLibrary {
         returns (uint256 cursor)
     {
         require(target != EMPTY);
-        require(!exists(self, target));
         cursor = EMPTY;
         uint256 probe = self.root;
         while (probe != EMPTY) {
             cursor = probe;
-            if (target < probe) {
+            if (probe == target) {
+                return cursor;
+            } else if (target < probe) {
                 probe = self.nodes[probe].left;
             } else {
                 probe = self.nodes[probe].right;
             }
         }
-        target = self.nodes[cursor].right;
-        while (cursor != EMPTY && target == self.nodes[cursor].right) {
-            target = cursor;
+        if (cursor > target) {
+            return cursor;
+        }
+        probe = cursor;
+        cursor = self.nodes[probe].parent;
+        while (cursor != EMPTY && probe == self.nodes[cursor].right) {
+            probe = cursor;
             cursor = self.nodes[cursor].parent;
         }
         return cursor;
     }
+    
 
     function rotateLeft(Tree storage self, uint256 key) private {
         uint256 cursor = self.nodes[key].right;
