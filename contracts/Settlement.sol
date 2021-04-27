@@ -1,41 +1,39 @@
 pragma solidity ^0.7.3;
 
 import "@openzeppelin/contracts-upgradeable/math/SafeMathUpgradeable.sol";
-import "../libs/abdk-libraries-solidity/ABDKMath64x64.sol";
+import {SafeDecimalMath} from "./SafeDecimalMath.sol";
 
 library Settlement {
     using SafeMathUpgradeable for uint256;
-    uint256 constant varianceUnit = 1e17;
+    // 1e17 wei for 0.1 variance units adjusted to fixed point 8 precision
+    uint256 constant VARIANCE_UNIT = 1e25;
 
     /**
      * @notice settle a swap position, add the settlement payout to their position for the user to redeem.
-     * @param realizedVar realized variance pulled from the oracle
-     * @param strikeVar strike variance of user's variance position
-     * @param longPosition user's long position for the specified strike
-     * @param shortPosition user's short position for the specified strike
+     * @param realizedVar realized variance fixed point 8 precision
+     * @param strikeVar strike variance fixed point 8 precision
+     * @param longPosition user's long position fixed point 8 precision
+     * @param shortPosition user's short position fixed point 8 precision
      */
     function calcPositionSettlement(
         uint256 realizedVar,
         uint256 strikeVar,
-        int128 longPosition,
-        int128 shortPosition
+        uint256 longPosition,
+        uint256 shortPosition
     ) internal pure returns (uint256) {
-        // Convert variance into decimalized representation i.e. 150% variance is 1.5
-        // This will obviously depend on how variance oracle is implemented, we can change math operations later
         uint256 longPayoutPerSwap = calcPayoutPerSwap(realizedVar, strikeVar);
-        uint256 shortPayoutPerSwap = varianceUnit.sub(longPayoutPerSwap);
-        // multiply signed 64.64 bit fixed point ABDK long position by uint256 payout per swap in wei
+        uint256 shortPayoutPerSwap = VARIANCE_UNIT.sub(longPayoutPerSwap);
         uint256 longPayout =
-            ABDKMath64x64.mulu(longPosition, longPayoutPerSwap);
+            SafeDecimalMath.multiplyDecimal(longPosition, longPayoutPerSwap);
         uint256 shortPayout =
-            ABDKMath64x64.mulu(shortPosition, shortPayoutPerSwap);
+            SafeDecimalMath.multiplyDecimal(shortPosition, shortPayoutPerSwap);
         return shortPayout.add(longPayout);
     }
 
     /**
      * @notice calculates long payout of swap in wei based on the strike/realized variance.
-     * @param realizedVar realized variance for the swap in decimal representation
-     * @param strikeVar strike variance for the swap in decimal representation
+     * @param realizedVar realized variance fixed point 8 precision
+     * @param strikeVar strike variance fixed point 8 precision
      */
     function calcPayoutPerSwap(uint256 realizedVar, uint256 strikeVar)
         internal
@@ -44,9 +42,12 @@ library Settlement {
     {
         uint256 payoutPerSwap =
             strikeVar < realizedVar
-                ? ((realizedVar.sub(strikeVar)).mul(varianceUnit)).div(100) // multiply difference times 0.1 ETH in wei
+                ? SafeDecimalMath.multiplyDecimal(
+                    (realizedVar.sub(strikeVar)),
+                    VARIANCE_UNIT
+                )
                 : 0;
         // fully collateralized, payout cannot exceed size of swap
-        return payoutPerSwap > varianceUnit ? varianceUnit : payoutPerSwap;
+        return payoutPerSwap > VARIANCE_UNIT ? VARIANCE_UNIT : payoutPerSwap;
     }
 }

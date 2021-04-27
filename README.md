@@ -31,25 +31,45 @@ await Pool.connect(accounts[1]).deposit({ value: ethers.utils.parseEther("10") }
 ## - *Access Controller to Sell a Swap*
 Sell 28.5 variance units @ 130 strike for 0.05/unit
 
-ABDK conversion functions convertTo64x64 and convertFrom64x64 are available within the Hardhat console using the provided hardhat.config.js
-
-Please refer to the contracts to determine if an argument needs to be a 64.64 fixed point number or a regular unsigned integer
+Please refer to the contracts to determine if an argument needs to be represented as a 8 fixed point number
 ```
 const controllerContract = await ethers.getContractFactory("Controller")
 const Controller = await controllerContract.attach("0x6e886E689e0AF483e8bE9B9BF48cB5Bd324CE5B9")
-await Controller.connect(accounts[0].address).sellSwapPosition("ETH-120-1616043857-1616043902", accounts[0].address, 130, ethers.utils.parseEther("0.05"), convertTo64x64(28.5))
+await Controller.connect(accounts[0].address).sellSwapPosition("ETH-120000000-1616043857-1616043902", accounts[0].address, 1.3e8, ethers.utils.parseEther("1.425"), 28.5e8) 
+```
+
+The sellSwapPosition function emits a SellOrder event which contains the address of the seller, and the ID of the order
+To collect these events after you've called sellSwapPosition, you can use ethers.js event filters as shown below. 
+
+```
+let sellEventFilter = Controller.filters.SellOrder()
+let sellEvent = await Controller.queryFilter(sellEventFilter, "latest")
+> console.log(Number(sellEvent[0].args.orderID))
+1
 ```
 ## - *Access Controller to Quote a Swap*
 Get quote for 80 variance units @ 130 strike
+
+NOTE: For 8 fixed point return values that represent wei values, use the BigNumber .div() function instead of JS built-in division because
+wei values are too large for JS to handle and unlike position sizes, do not need to be decimalized (< 1 wei is insignificant)
 ```
-results = await Controller.connect(accounts[1].address).getQuoteForPosition("ETH-120-1616043857-1616043902", 130, convertTo64x64(80))
-console.log("Quote Total Price: " + ethers.utils.formatEther(results[0]) + " ETH, " + "(" + convertFrom64x64(results[1]) + ")" + " Units Unfulfilled")
+results = await Controller.connect(addr3).getQuoteForPosition("ETH-120000000-1616043857-1616043902", 1.3e8, 40e8);
+console.log("(" + results[0] / 1e8 + ")" + " Units Left Unmatched" + ", Units to Partially Purchase From Last Order: " + results[1] / 1e8);
+orderIDS = results[2];
+for (let i = 0; i < 10; i++) {
+    if (orderIDS[i] != 0) {
+        console.log("Order " + orderIDS[i])
+        query = await Orderbook.getOrder(orderIDS[i]);
+        console.log("Current Ask: " + ethers.utils.formatEther(query[2].div(1e8)) + " ETH, Current Units: " + (query[1] / 1e8).toString())
+        console.log("Belonging to: " + query[0] + " @ position index: " + query[5].toString());
+    }
+}
 ```
 
 ## - *Access Controller to Buy a Swap*
 Purchase 1.425 ETH of 130 strike
 ```
-buyTx = await Controller.connect(accounts[1].address).buySwapPosition("ETH-120-1616043857-1616043902", accounts[1].address, 130, ethers.utils.parseEther("1.425"))
+buyTx = await Controller.connect(accounts[1].address).buySwapPosition("ETH-120000000-1616043857-1616043902", accounts[1].address, 1.3e8, ethers.utils.parseEther("1.425"))
 try {
     buyReceipt = await buyTx.wait();
 } catch (e) {

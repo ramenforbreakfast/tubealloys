@@ -2,9 +2,10 @@ pragma solidity ^0.7.3;
 
 interface OrderbookInterface {
     struct Order {
-        uint256 askPrice;
-        uint256 posIdx;
         address seller;
+        uint256 totalUnits;
+        uint256 totalAsk;
+        uint256 posIdx;
         bool unfilled;
     }
 
@@ -16,19 +17,21 @@ interface OrderbookInterface {
         returns (
             uint256,
             uint256,
-            address,
-            uint256
+            uint256,
+            address
         );
 
-    function getNumberOfOrders() external view returns (uint256);
-
-    function getOrder(uint256 index)
+    function getOrder(uint256 orderID)
         external
         view
         returns (
+            address,
             uint256,
             uint256,
-            address
+            uint256,
+            uint256,
+            uint256,
+            bool
         );
 
     function getNumberOfUserPositions(address addr)
@@ -41,14 +44,11 @@ interface OrderbookInterface {
         view
         returns (
             uint256,
-            int128,
-            int128
+            uint256,
+            uint256
         );
 
-    function getFilledOrderPayment(address owner)
-        external
-        view
-        returns (uint256);
+    function getOrderPayments(address owner) external view returns (uint256);
 
     function getUserSettlement(address owner) external view returns (uint256);
 
@@ -56,34 +56,31 @@ interface OrderbookInterface {
 
     function getAddrByIdx(uint256 index) external view returns (address);
 
-    function redeemFilledOrderPayment(address owner) external returns (uint256);
+    function redeemOrderPayments(address owner) external returns (uint256);
 
     function redeemUserSettlement(address owner) external returns (uint256);
 
     function isSettled() external view returns (bool);
 
-    function setUserSettlement(address owner, uint256 settlement) external;
-
     function sellOrder(
         address seller,
         uint256 strike,
-        uint256 askPrice,
-        int128 positionSize
-    ) external;
+        uint256 totalAsk,
+        uint256 totalUnits
+    ) external returns (uint256);
 
     function fillBuyOrderByMaxPrice(
         address buyer,
         uint256 minStrike,
-        uint256 maxPrice
+        uint256 amountToSpend
     ) external returns (uint256);
 
-    function getBuyOrderByUnitAmount(uint256 minStrike, int128 uintAmount)
+    function getBuyOrderByUnitAmount(uint256 minStrike, uint256 unitsRequested)
         external
         view
         returns (
             uint256,
-            int128,
-            int128[1000] memory,
+            uint256,
             uint256[1000] memory
         );
 

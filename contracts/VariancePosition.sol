@@ -1,7 +1,6 @@
 pragma solidity ^0.7.3;
 
 import "@openzeppelin/contracts-upgradeable/math/SafeMathUpgradeable.sol";
-import "../libs/abdk-libraries-solidity/ABDKMath64x64.sol";
 
 /*
  * A library for maintaining the variance positions of sellers and buyers.
@@ -14,9 +13,9 @@ library VariancePosition {
         //The strike realized variance of the position.
         uint256 strike;
         //The amount of long position units. This value represents a call on the variance swap at realized strike.
-        int128 longPositionAmount;
+        uint256 longPositionAmount;
         //The amount of short position units. This value represents the inverse of the longPositionAmount.
-        int128 shortPositionAmount;
+        uint256 shortPositionAmount;
     }
 
     //Structure that holds all positions of an address, as well as the total payment they have received
@@ -24,7 +23,7 @@ library VariancePosition {
         //Array of all positions a user holds.
         Position[] positions;
         //The total amount a user has been paid from filled orders in wei.
-        uint256 filledOrderPayment;
+        uint256 orderPayments;
         //The total amount a user has been paid from variance swap settlements in wei.
         uint256 userSettlement;
     }
@@ -46,65 +45,68 @@ library VariancePosition {
     function _addToPosition(
         UserPositions storage userPositions,
         uint256 strike,
-        int128 longAmount,
-        int128 shortAmount,
-        uint256 sellerPay,
+        uint256 longAmount,
+        uint256 shortAmount,
+        uint256 orderPayment,
         uint256 index
     ) internal {
-        require(index < userPositions.positions.length + 1);
+        require(index <= userPositions.positions.length);
 
         if (index == userPositions.positions.length) {
             _createPosition(userPositions, strike);
         }
 
-        userPositions.positions[index].longPositionAmount = ABDKMath64x64.add(
-            userPositions.positions[index].longPositionAmount,
-            longAmount
-        );
-        userPositions.positions[index].shortPositionAmount = ABDKMath64x64.add(
-            userPositions.positions[index].shortPositionAmount,
-            shortAmount
-        );
-        userPositions.filledOrderPayment = userPositions.filledOrderPayment.add(
-            sellerPay
+        userPositions.positions[index].longPositionAmount = userPositions
+            .positions[index]
+            .longPositionAmount
+            .add(longAmount);
+        userPositions.positions[index].shortPositionAmount = userPositions
+            .positions[index]
+            .shortPositionAmount
+            .add(shortAmount);
+        userPositions.orderPayments = userPositions.orderPayments.add(
+            orderPayment
         );
     }
 
     /*
-     * Remove long and short units as well as sellerPay from a position. This function is used for filling orders.
+     * Remove long and short units as well as orderPayments from a position. This function is used for filling orders.
      */
     function _removeFromPosition(
         UserPositions storage userPositions,
-        int128 longAmount,
-        int128 shortAmount,
-        uint256 sellerPay,
+        uint256 longAmount,
+        uint256 shortAmount,
+        uint256 orderPayment,
         uint256 index
     ) internal {
-        require(index < userPositions.positions.length);
+        require(
+            index < userPositions.positions.length,
+            "Variance Position: invalid position index!"
+        );
 
-        userPositions.positions[index].longPositionAmount = ABDKMath64x64.sub(
-            userPositions.positions[index].longPositionAmount,
-            longAmount
-        );
-        userPositions.positions[index].shortPositionAmount = ABDKMath64x64.sub(
-            userPositions.positions[index].shortPositionAmount,
-            shortAmount
-        );
-        userPositions.filledOrderPayment = userPositions.filledOrderPayment.sub(
-            sellerPay
+        userPositions.positions[index].longPositionAmount = userPositions
+            .positions[index]
+            .longPositionAmount
+            .sub(longAmount);
+        userPositions.positions[index].shortPositionAmount = userPositions
+            .positions[index]
+            .shortPositionAmount
+            .sub(shortAmount);
+        userPositions.orderPayments = userPositions.orderPayments.sub(
+            orderPayment
         );
     }
 
     /*
      * Set seller payment for user to 0 and return the payment. This represents a seller getting their payout for the open orders that were filled.
      */
-    function _settleOrderPayment(UserPositions storage userPositions)
+    function _settleOrderPayments(UserPositions storage userPositions)
         internal
         returns (uint256)
     {
-        uint256 filledOrderPayment = userPositions.filledOrderPayment;
-        userPositions.filledOrderPayment = 0;
-        return filledOrderPayment;
+        uint256 orderPayment = userPositions.orderPayments;
+        userPositions.orderPayments = 0;
+        return orderPayment;
     }
 
     /*
